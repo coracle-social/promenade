@@ -1,0 +1,7 @@
+promenade
+.env
+static/bundle.css
+*_templ.go
+node_modules
+events
+tmp

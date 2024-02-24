@@ -1,69 +1,79 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"log"
+	"context"
+	"embed"
+	"net/http"
+	"os"
+	"os/signal"
+	"slices"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+	_ "github.com/a-h/templ"
+	"github.com/fiatjaf/khatru"
+	"github.com/kelseyhightower/envconfig"
+	"github.com/nbd-wtf/go-nostr"
+	"github.com/rs/cors"
+	"github.com/rs/zerolog"
+)
+
+type Settings struct {
+	Port string `envconfig:"PORT" default:"6363"`
+
+	PrivateKey string `envconfig:"PRIVATE_KEY" required:"true"`
+}
+
+//go:embed static/*
+var static embed.FS
+
+//go:embed index.html
+var index []byte
+
+var (
+	s   Settings
+	rw  nostr.RelayStore
+	log = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
 )
 
 func main() {
-	sec1 := make([]byte, 32)
-	sec1[31] = 1
-	sk1, pk1 := btcec.PrivKeyFromBytes(sec1)
-
-	sec2 := make([]byte, 32)
-	sec2[31] = 2
-	sk2, pk2 := btcec.PrivKeyFromBytes(sec2)
-
-	signers := []*secp256k1.PublicKey{pk1, pk2}
-
-	ctx1, err1 := musig2.NewContext(sk1, true, musig2.WithKnownSigners(signers))
-	ctx2, err2 := musig2.NewContext(sk2, true, musig2.WithKnownSigners(signers))
-
-	if err := errors.Join(err1, err2); err != nil {
-		log.Fatal(err)
+	err := envconfig.Process("", &s)
+	if err != nil {
+		log.Fatal().Err(err).Msg("couldn't process envconfig")
 		return
 	}
 
-	s1, err1 := ctx1.NewSession()
-	s2, err2 := ctx2.NewSession()
-	if err := errors.Join(err1, err2); err != nil {
-		log.Fatal("failed to create session: ", err)
-		return
+	// initialize relay and relay store
+	relay := khatru.NewRelay()
+	relay.RejectEvent = append(relay.RejectEvent,
+		func(ctx context.Context, event *nostr.Event) (reject bool, msg string) {
+			if slices.Contains([]int{nostr.KindNostrConnect, 24233}, event.Kind) {
+				return false, ""
+			}
+			return true, "unsupported event"
+		})
+	mux := relay.Router()
+
+	// routes
+	mux.Handle("/static/", http.FileServer(http.FS(static)))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("content-type", "text/html")
+		w.Write(index)
+	})
+
+	// start
+	log.Print("listening at http://0.0.0.0:" + s.Port)
+	server := &http.Server{
+		Addr:    "0.0.0.0:" + s.Port,
+		Handler: cors.AllowAll().Handler(relay),
 	}
+	go func() {
+		server.ListenAndServe()
+		if err := server.ListenAndServe(); err != nil {
+			log.Error().Err(err).Msg("")
+		}
+	}()
 
-	_, err1 = s1.RegisterPubNonce(s2.PublicNonce())
-	_, err2 = s2.RegisterPubNonce(s1.PublicNonce())
-	if err := errors.Join(err1, err2); err != nil {
-		log.Fatal("failed to register nonce: ", err)
-		return
-	}
-
-	var msg [32]byte
-
-	ps1, err1 := s1.Sign(msg)
-	ps2, err2 := s2.Sign(msg)
-
-	if err := errors.Join(err1, err2); err != nil {
-		log.Fatal("error signing: ", err)
-		return
-	}
-
-	_, err1 = s1.CombineSig(ps2)
-	_, err2 = s2.CombineSig(ps1)
-	if err := errors.Join(err1, err2); err != nil {
-		log.Fatal("error combining: ", err)
-		return
-	}
-
-	sig1 := s1.FinalSig()
-	sig2 := s1.FinalSig()
-
-	cpk, _ := ctx2.CombinedKey()
-	fmt.Println(sig1.Verify(msg[:], cpk))
-	fmt.Println(sig2.Verify(msg[:], cpk))
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, os.Interrupt)
+	<-sc
+	server.Close()
 }
