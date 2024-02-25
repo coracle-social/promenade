@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"slices"
 
 	_ "github.com/a-h/templ"
 	"github.com/fiatjaf/khatru"
@@ -29,9 +28,10 @@ var static embed.FS
 var index []byte
 
 var (
-	s   Settings
-	rw  nostr.RelayStore
-	log = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	s     Settings
+	rw    nostr.RelayStore
+	log   = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	relay = khatru.NewRelay()
 )
 
 func main() {
@@ -41,15 +41,22 @@ func main() {
 		return
 	}
 
-	// initialize relay and relay store
-	relay := khatru.NewRelay()
+	relay.RejectFilter = append(relay.RejectFilter,
+		veryPrivateFiltering,
+	)
 	relay.RejectEvent = append(relay.RejectEvent,
-		func(ctx context.Context, event *nostr.Event) (reject bool, msg string) {
-			if slices.Contains([]int{nostr.KindNostrConnect, 24233}, event.Kind) {
-				return false, ""
-			}
-			return true, "unsupported event"
-		})
+		preliminaryElimination,
+	)
+	relay.OnEphemeralEvent = append(relay.OnEphemeralEvent,
+		handleNIP46Request,
+		handleNonce,
+		handlePartialSig,
+	)
+	relay.OnConnect = append(relay.OnConnect,
+		func(ctx context.Context) {
+			khatru.RequestAuth(ctx)
+		},
+	)
 	mux := relay.Router()
 
 	// routes
