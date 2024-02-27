@@ -2,9 +2,10 @@ package common
 
 const (
 	AccountCreationKind      = 24230
-	PartialPubkeyKind        = 24231
-	PartialSharedKeyKind     = 24232
-	EventToPartiallySignKind = 24233
-	NonceKind                = 24234
-	PartialSigKind           = 24235
+	ConnectionKind           = 24231
+	PartialPubkeyKind        = 24232
+	PartialSharedKeyKind     = 24233
+	EventToPartiallySignKind = 24234
+	NonceKind                = 24235
+	PartialSigKind           = 24236
 )

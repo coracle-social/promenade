@@ -21,23 +21,6 @@ var (
 	data      Data
 )
 
-type Data struct {
-	SecretKey       string           `json:"secret_key"`
-	RelayAgreements []RelayAgreement `json:"relay_agreement"`
-	Accounts        []Account        `json:"accounts"`
-}
-
-type Account struct {
-	PartialSecretKey string   `json:"partial_secret_key"`
-	Signers          []string `json:"signers"`
-	Relay            string   `json:"relay"`
-}
-
-type RelayAgreement struct {
-	URL                  string `json:"url"`
-	AcceptingNewAccounts bool   `json:"accepting_new_accounts"`
-}
-
 var app = &cli.Command{
 	Name: "promd",
 	Flags: []cli.Flag{

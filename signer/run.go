@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"git.fiatjaf.com/multi-nip46/common"
@@ -27,11 +28,9 @@ var run = &cli.Command{
 	Action: func(ctx context.Context, c *cli.Command) error {
 		bg := ctx
 
-		dfs := make([]nostr.DirectedFilters, 0,
-			len(data.Accounts)+len(data.RelayAgreements))
-
-		for _, relay := range data.RelayAgreements {
-			dfs = append(dfs, nostr.DirectedFilters{
+		dfs := make([]nostr.DirectedFilters, len(data.RelayAgreements))
+		for i, relay := range data.RelayAgreements {
+			dfs[i] = nostr.DirectedFilters{
 				Relay: relay.URL,
 				Filters: nostr.Filters{
 					{
@@ -41,21 +40,15 @@ var run = &cli.Command{
 						},
 					},
 				},
-			})
-		}
-
-		for _, account := range data.Accounts {
-			session := makeSession(account)
-			aggpk := session.aggpk()
-			sessions[aggpk] = session
-
-			dfs = append(dfs, nostr.DirectedFilters{
-				Relay:   account.Relay,
-				Filters: defaultFiltersForAccount(aggpk),
-			})
+			}
 		}
 
 		mainEventStream := pool.BatchedSubMany(bg, dfs)
+
+		for _, account := range data.Accounts {
+			go listenForSessionSpecificEvents(bg, mainEventStream, account)
+		}
+
 		for ie := range mainEventStream {
 			func() {
 				ctx, cancel := context.WithTimeout(bg, time.Second*10)
@@ -118,6 +111,7 @@ var run = &cli.Command{
 					if len(pendingCreation.receivedPubkeys) == len(pendingCreation.mainSignersPubkeys) {
 						// we've received all pubkeys,
 						// we can now record this and open a session
+						slices.Sort(pendingCreation.receivedPubkeys)
 						account := Account{
 							Relay:            ie.Relay.URL,
 							PartialSecretKey: pendingCreation.ourSecretKey,
@@ -136,18 +130,41 @@ var run = &cli.Command{
 						sessions[aggpk] = session
 
 						// when opening a session we must also subscribe to the correct filter
-						go func(relay *nostr.Relay) {
-							sub, err := relay.Subscribe(bg, defaultFiltersForAccount(aggpk))
-							if err != nil {
-								return
-							}
-							// then forward these events to the main loop
-							for evt := range sub.Events {
-								mainEventStream <- nostr.IncomingEvent{Relay: relay, Event: evt}
-							}
-						}(ie.Relay)
+						go listenForSessionSpecificEvents(bg, mainEventStream, account)
 					}
 
+				case common.ConnectionKind:
+					p := ie.Tags.GetFirst([]string{"p", ""})
+					aggpk := (*p)[1]
+					session, ok := sessions[aggpk]
+					if !ok {
+						return
+					}
+
+					external := ie.Tags.GetFirst([]string{"peer", ""})
+					if external == nil {
+						return
+					}
+					externalPubkey := (*external)[1]
+
+					// at this point we must share our ECDH partial for  the given connection
+					// so the server can decrypt the message
+					pe, err := getPartialECDH(session.account.Signers, session.account.PartialSecretKey, externalPubkey)
+					if err != nil {
+						return
+					}
+
+					ecdhEvt := nostr.Event{
+						CreatedAt: nostr.Now(),
+						Kind:      common.NonceKind,
+						Content:   pe,
+						Tags: nostr.Tags{
+							{"p", aggpk},
+							{"peer", externalPubkey},
+						},
+					}
+					ecdhEvt.Sign(data.SecretKey)
+					ie.Relay.Publish(ctx, ecdhEvt)
 				case common.EventToPartiallySignKind:
 					p := ie.Tags.GetFirst([]string{"p", ""})
 					aggpk := (*p)[1]
