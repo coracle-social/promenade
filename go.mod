@@ -5,6 +5,7 @@ go 1.21.6
 require (
 	github.com/a-h/templ v0.2.543
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.2
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0
 	github.com/fiatjaf/khatru v0.3.1
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -19,7 +20,6 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.0.5 // indirect
-	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.2 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.0.1 // indirect
 	github.com/fasthttp/websocket v1.5.7 // indirect
 	github.com/fiatjaf/eventstore v0.3.8 // indirect

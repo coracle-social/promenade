@@ -2,17 +2,15 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"encoding/hex"
 	"slices"
 
 	"git.fiatjaf.com/multi-nip46/common"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/fiatjaf/khatru"
-	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
-	"github.com/puzpuzpuz/xsync/v3"
 )
-
-var userContexts = xsync.NewMapOf[string, *KeyUserContext]()
 
 func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool, msg string) {
 	if len(filter.Kinds) == 1 && filter.Kinds[0] == nostr.KindNostrConnect {
@@ -25,20 +23,34 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 		return true, "auth-required: everything is private"
 	}
 
-	// otherwise assume this is a musig2 signer
-	pTags, _ := filter.Tags["p"]
-	if len(pTags) == 0 {
-		return true, "restricted: must have a 'p' tag at least"
+	// aside from nip-46 stuff, only allow our registered signers to connect
+	if !slices.Contains(s.RegisteredSigners, requester) {
+		return true, "restricted: only registered signers can connect"
 	}
 
+	// disallow forbidden kinds
+	if slices.Contains(filter.Kinds, common.PartialSharedKeyKind) ||
+		slices.Contains(filter.Kinds, common.PartialSigKind) {
+		// these things cannot be listened for even by the signers
+		return true, "restricted: this is confidential"
+	}
+
+	// check if there is a 'p' in the tags
+	pTags, _ := filter.Tags["p"]
+	if len(pTags) == 0 {
+		// if not, assume this is a musig2 signer waiting to hear about new accounts to be created
+	}
+
+	// otherwise assume this is a musig2 signer asking for events related to a sign event flow
 	for _, p := range pTags {
 		// every request 'p' tag must be associated with the ms2 signer pubkey
 		session, ok := userContexts.Load(p)
 		if !ok {
 			return true, "restricted: unknown 'p' tag '" + p + "'"
 		}
-
-		if !slices.Contains(session.signers, requester) {
+		if !slices.ContainsFunc(session.signers, func(pk *btcec.PublicKey) bool {
+			return hex.EncodeToString(pk.SerializeCompressed()[1:]) == requester
+		}) {
 			return true, "restricted: you are not authorized for '" + p + "'"
 		}
 	}
@@ -47,6 +59,19 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 }
 
 func preliminaryElimination(ctx context.Context, event *nostr.Event) (reject bool, msg string) {
+	if event.Kind == nostr.KindNostrConnect {
+		return false, ""
+	}
+
+	if event.Kind == common.PartialPubkeyKind {
+		if pubkeyBytes, _ := hex.DecodeString(event.Content); len(pubkeyBytes) != 33 {
+			return true, "invalid: invalid pubkey length"
+		} else if _, err := btcec.ParsePubKey(pubkeyBytes); err != nil {
+			return true, "invalid: " + err.Error()
+		}
+		return false, ""
+	}
+
 	targetUser := event.Tags.GetFirst([]string{"p", ""})
 	if targetUser == nil {
 		return true, "missing 'p' tag"
@@ -54,95 +79,50 @@ func preliminaryElimination(ctx context.Context, event *nostr.Event) (reject boo
 	p := (*targetUser)[1]
 	kuc, ok := userContexts.Load(p)
 	if !ok {
-		return true, "unknown public key " + p
+		return true, "unknown aggregated public key " + p
 	}
 
-	if event.Kind == nostr.KindNostrConnect {
+	if !slices.ContainsFunc(kuc.signers, func(pk *btcec.PublicKey) bool {
+		return hex.EncodeToString(pk.SerializeCompressed()[1:]) == event.PubKey
+	}) {
+		return true, "can't act on this 'p'"
+	}
+
+	switch event.Kind {
+	case common.PartialSharedKeyKind:
+		if pubkeyBytes, _ := hex.DecodeString(event.Content); len(pubkeyBytes) != 33 {
+			return true, "invalid: invalid pubkey length"
+		} else if _, err := btcec.ParsePubKey(pubkeyBytes); err != nil {
+			return true, "invalid: " + err.Error()
+		}
 		return false, ""
-	} else if event.Kind == common.PartialSharedKeyKind {
-		return false, ""
-	} else if event.Kind == common.NonceKind {
+	case common.NonceKind:
 		e := event.Tags.GetFirst([]string{"e", ""})
 		if e == nil {
-			return true, "missing 'e' tag"
+			return true, "invalid: missing 'e' tag"
 		}
-
 		targetEvent := (*e)[1]
 		if targetEvent != kuc.currentEventBeingSigned {
-			return true, "wrong 'e' signed"
+			return true, "invalid: wrong 'e' signed"
 		}
-
+		if nonceBytes, _ := hex.DecodeString(event.Content); len(nonceBytes) != musig2.PubNonceSize {
+			return true, "invalid: invalid nonce size"
+		}
 		return false, ""
-	} else if event.Kind == common.PartialSigKind {
+	case common.PartialSigKind:
 		e := event.Tags.GetFirst([]string{"e", ""})
 		if e == nil {
-			return true, "missing 'e' tag"
+			return true, "invalid: missing 'e' tag"
 		}
-
 		targetEvent := (*e)[1]
 		if targetEvent != kuc.currentEventBeingSigned {
-			return true, "wrong 'e' signed"
+			return true, "invalid: wrong 'e' signed"
 		}
-
 		return false, ""
 	}
 
-	return true, "unsupported event"
-}
-
-func handleNIP46Request(ctx context.Context, event *nostr.Event) {
-	if event.Kind != nostr.KindNostrConnect {
-		return
-	}
-
-	p := event.Tags.GetFirst([]string{"p", ""})
-	targetPubkey := (*p)[1]
-	session, _ := userContexts.Load(targetPubkey)
-
-	req, err := session.ParseRequest(event)
-	if err != nil {
-		log.Warn().Err(err).Str("from", event.PubKey).Str("to", targetPubkey).
-			Msg("failed to parse request")
-		return
-	}
-
-	var result string
-	var resultErr error
-
-	switch req.Method {
-	case "connect":
-		result = "ack"
-	case "get_public_key":
-		result = targetPubkey
-	case "sign_event":
-		if len(req.Params) != 1 {
-			resultErr = fmt.Errorf("wrong number of arguments to 'sign_event'")
-			break
-		}
-		evt := nostr.Event{}
-		if err := easyjson.Unmarshal([]byte(req.Params[0]), &evt); err != nil {
-			resultErr = fmt.Errorf("failed to decode event/2: %w", err)
-			break
-		}
-
-		if err := session.Sign(&evt); err != nil {
-			resultErr = fmt.Errorf("failed to sign event: %w", err)
-			break
-		}
-		jrevt, _ := easyjson.Marshal(evt)
-		result = string(jrevt)
-	}
-
-	_, eventResponse, err := session.MakeResponse(req.ID, event.PubKey, result, resultErr)
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to make response")
-		return
-	}
-
-	if err := session.Sign(&eventResponse); err != nil {
-		log.Warn().Err(err).Msg("failed to sign response")
-		return
-	}
-
-	relay.BroadcastEvent(&eventResponse)
+	// blocking everything else here makes it so other users can't trigger signers to do stuff
+	// for example, no one can create the events that only this relay can create like the account creation event
+	// but still signers should ensure they check that the events they receive originate from the relay pubkey
+	return true, "blocked: unsupported event"
 }

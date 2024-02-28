@@ -60,7 +60,7 @@ var run = &cli.Command{
 					key := nostr.GeneratePrivateKey()
 					partialPubkeyEvt := nostr.Event{
 						CreatedAt: nostr.Now(),
-						Kind:      common.NonceKind,
+						Kind:      common.PartialPubkeyKind,
 						Content:   key,
 						Tags: nostr.Tags{
 							{"e", ie.ID},
@@ -96,10 +96,6 @@ var run = &cli.Command{
 						return
 					}
 					originalEvent := (*e)[1]
-
-					if !nostr.IsValidPublicKey(ie.Content) {
-						return
-					}
 
 					pendingCreation := pending[originalEvent]
 					if wasReceivedAlready, exists := pendingCreation.mainSignersPubkeys[ie.PubKey]; !exists || wasReceivedAlready {
@@ -156,14 +152,14 @@ var run = &cli.Command{
 
 					ecdhEvt := nostr.Event{
 						CreatedAt: nostr.Now(),
-						Kind:      common.NonceKind,
+						Kind:      common.PartialSharedKeyKind,
 						Content:   pe,
 						Tags: nostr.Tags{
 							{"p", aggpk},
 							{"peer", externalPubkey},
 						},
 					}
-					ecdhEvt.Sign(data.SecretKey)
+					ecdhEvt.Sign(session.account.PartialSecretKey)
 					ie.Relay.Publish(ctx, ecdhEvt)
 				case common.EventToPartiallySignKind:
 					p := ie.Tags.GetFirst([]string{"p", ""})
@@ -193,7 +189,7 @@ var run = &cli.Command{
 							{"p", aggpk},
 						},
 					}
-					nonceEvt.Sign(data.SecretKey)
+					nonceEvt.Sign(session.account.PartialSecretKey)
 					ie.Relay.Publish(ctx, nonceEvt)
 				case common.NonceKind:
 					p := ie.Tags.GetFirst([]string{"p", ""})

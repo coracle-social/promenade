@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -14,13 +15,22 @@ import (
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip46"
+	"github.com/puzpuzpuz/xsync/v3"
+)
+
+var (
+	userContexts    = xsync.NewMapOf[string, *KeyUserContext]()
+	pendingCreation = xsync.NewMapOf[string, *PendingKeyUserContext]()
 )
 
 type KeyUserContext struct {
-	m2s     *musig2.Context
-	signers []string
+	name string
 
-	nip46.Session
+	m2s     *musig2.Context
+	signers []*btcec.PublicKey
+
+	nip46       *xsync.MapOf[string, *nip46.Session]
+	ecdhPending *xsync.MapOf[string, *PendingECDH]
 
 	signSession             *musig2.Session
 	lock                    sync.Mutex
@@ -28,6 +38,21 @@ type KeyUserContext struct {
 	noncesReceived          map[string]struct{}
 	partialSigsReceived     map[string]struct{}
 	callback                chan string
+}
+
+type PendingECDH struct {
+	partialSharedKeys []*btcec.PublicKey
+	lock              sync.Mutex
+	received          map[string]struct{}
+	callback          chan *nip46.Session
+}
+
+type PendingKeyUserContext struct {
+	signerMainKeys    []string
+	partialPublicKeys [][]byte
+
+	name     string      // name chosen when the account was being created
+	callback chan string // this will be called with the resulting pubkey
 }
 
 func (kuc *KeyUserContext) Sign(event *nostr.Event) error {
@@ -94,10 +119,115 @@ func (kuc *KeyUserContext) Sign(event *nostr.Event) error {
 	}
 }
 
+func handlePartialPublicKey(ctx context.Context, event *nostr.Event) {
+	if event.Kind != common.PartialPubkeyKind {
+		return
+	}
+
+	e := event.Tags.GetFirst([]string{"e", ""})
+	if e == nil {
+		return
+	}
+	originalEvent := (*e)[1]
+
+	pkuc, ok := pendingCreation.Load(originalEvent)
+	if !ok {
+		return
+	}
+
+	idx := slices.Index(pkuc.signerMainKeys, event.PubKey)
+	if idx == -1 {
+		return
+	}
+
+	pubkeyBytes, _ := hex.DecodeString(event.Content)
+	pkuc.partialPublicKeys[idx] = pubkeyBytes
+
+	if slices.ContainsFunc(pkuc.partialPublicKeys, func(b []byte) bool { return len(b) == 0 }) {
+		// still missing some partial keys, end here
+		return
+	}
+
+	// we've got all partial keys, so remove the pending stuff
+	pendingCreation.Delete(originalEvent)
+
+	// and create a new key user context aka account
+	signers := make([]*btcec.PublicKey, len(pkuc.partialPublicKeys), len(pkuc.partialPublicKeys)+1)
+	for i, pkb := range pkuc.partialPublicKeys {
+		signers[i], _ = btcec.ParsePubKey(pkb)
+	}
+
+	privateKeyBytes, _ := hex.DecodeString(s.PrivateKey)
+	priv, pub := btcec.PrivKeyFromBytes(privateKeyBytes)
+	signers = append(signers, pub)
+	m2s, err := musig2.NewContext(priv, false, musig2.WithKnownSigners(signers))
+	if err != nil {
+		return
+	}
+	kuc := &KeyUserContext{
+		m2s:     m2s,
+		signers: signers,
+		name:    pkuc.name,
+		nip46:   xsync.NewMapOf[string, *nip46.Session](),
+	}
+	aggregatedPublicKey, _ := kuc.m2s.CombinedKey()
+	aggpk := hex.EncodeToString(aggregatedPublicKey.SerializeCompressed())
+
+	userContexts.Store(aggpk, kuc)
+
+	pkuc.callback <- aggpk
+	close(pkuc.callback)
+
+	// TODO: store
+}
+
 func handlePartialSharedKey(ctx context.Context, event *nostr.Event) {
 	if event.Kind != common.PartialSharedKeyKind {
 		return
 	}
+
+	kuc := getKeyUserSession(event)
+
+	peer := event.Tags.GetFirst([]string{"peer", ""})
+	peerPubkey := (*peer)[1]
+	ep, ok := kuc.ecdhPending.Load(peerPubkey)
+	if !ok {
+		return
+	}
+
+	pubkeyBytes, _ := hex.DecodeString(event.Content)
+	partialPubkey, _ := btcec.ParsePubKey(pubkeyBytes)
+
+	ep.lock.Lock()
+	defer ep.lock.Unlock()
+
+	if _, ok := ep.received[event.PubKey]; ok {
+		return
+	} else {
+		ep.received[event.PubKey] = struct{}{}
+		ep.partialSharedKeys = append(ep.partialSharedKeys, partialPubkey)
+	}
+
+	// if we have received everything, resolve this ecdh session
+	// see signer/helpers.go for the full rationale, but here we just add these points
+	result := &btcec.JacobianPoint{}
+	for _, psk := range ep.partialSharedKeys {
+		this := &btcec.JacobianPoint{}
+		psk.AsJacobian(this)
+		btcec.AddNonConst(result, this, result)
+	}
+	kuc.ecdhPending.Delete(peerPubkey)
+
+	shared := btcec.NewPublicKey(&result.X, &result.Y)
+	n46 := &nip46.Session{
+		SharedKey: shared.SerializeCompressed(),
+	}
+	kuc.nip46.Store(peerPubkey, n46)
+
+	ep.callback <- n46
+	close(ep.callback)
+
+	// TODO: store
 }
 
 func handleNonce(ctx context.Context, event *nostr.Event) {
@@ -105,9 +235,7 @@ func handleNonce(ctx context.Context, event *nostr.Event) {
 		return
 	}
 
-	p := event.Tags.GetFirst([]string{"p", ""})
-	targetPubkey := (*p)[1]
-	kuc, _ := userContexts.Load(targetPubkey)
+	kuc := getKeyUserSession(event)
 
 	var nonce [musig2.PubNonceSize]byte
 	if _, err := hex.Decode(nonce[:], []byte(event.Content)); err != nil {
@@ -155,9 +283,7 @@ func handlePartialSig(ctx context.Context, event *nostr.Event) {
 		return
 	}
 
-	p := event.Tags.GetFirst([]string{"p", ""})
-	targetPubkey := (*p)[1]
-	kuc, _ := userContexts.Load(targetPubkey)
+	kuc := getKeyUserSession(event)
 
 	var psb [32]byte
 	if _, err := hex.Decode(psb[:], []byte(event.Content)); err != nil {
