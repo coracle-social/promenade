@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -14,12 +15,18 @@ import (
 )
 
 var (
-	dir       string
-	secretKey string
-	publicKey string
-	pool      *nostr.SimplePool
-	data      Data
+	dir  string
+	pool *nostr.SimplePool
+	data Data
 )
+
+func main() {
+	err := app.Run(context.Background(), os.Args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "initialization error: %s\n", err)
+		os.Exit(1)
+	}
+}
 
 var app = &cli.Command{
 	Name: "promd",
@@ -40,11 +47,16 @@ var app = &cli.Command{
 			}
 		}
 
-		if _, err := os.ReadDir(dir); os.IsNotExist(err) {
+		if bdata, err := os.ReadFile(filepath.Join(dir, "data.json")); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read data.json: %w", err)
+		} else if err := json.Unmarshal(bdata, &data); err != nil && len(bdata) != 0 {
+			return fmt.Errorf("error parsing data.json ('%s'): %w", string(bdata), err)
+		} else if len(bdata) == 0 {
 			os.MkdirAll(dir, 0777)
 			randkey := make([]byte, 32)
+			rand.Read(randkey)
 
-			defaultData := Data{
+			data = Data{
 				SecretKey: hex.EncodeToString(randkey),
 				Accounts:  make([]Account, 0),
 				RelayAgreements: []RelayAgreement{
@@ -54,27 +66,24 @@ var app = &cli.Command{
 					},
 				},
 			}
-			if err := storeData(defaultData); err != nil {
+			if err := storeData(data); err != nil {
 				return err
 			}
 		}
 
-		if bdata, err := os.ReadFile(filepath.Join(dir, "data.json")); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read data.json: %w", err)
-		} else if err := json.Unmarshal(bdata, &data); err != nil {
-			return fmt.Errorf("error parsing data.json ('%v'): %w", bdata, err)
-		}
-
 		pool = nostr.NewSimplePool(context.Background(), nostr.WithAuthHandler(func(authEvent *nostr.Event) error {
-			return authEvent.Sign(secretKey)
+			return authEvent.Sign(data.SecretKey)
 		}))
+
+		publicKey, _ := nostr.GetPublicKey(data.SecretKey)
+		fmt.Fprintf(os.Stderr, "running as %s\n", publicKey)
 
 		return nil
 	},
 	Commands: []*cli.Command{
 		run,
 	},
-	DefaultCommand: "client",
+	DefaultCommand: "run",
 }
 
 func storeData(data Data) error {

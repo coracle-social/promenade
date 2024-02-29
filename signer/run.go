@@ -50,7 +50,7 @@ var run = &cli.Command{
 		}
 
 		for ie := range mainEventStream {
-			func() {
+			func(ie nostr.IncomingEvent) {
 				ctx, cancel := context.WithTimeout(bg, time.Second*10)
 				defer cancel()
 
@@ -243,7 +243,7 @@ var run = &cli.Command{
 						}
 					}
 				}
-			}()
+			}(ie)
 		}
 
 		return nil
