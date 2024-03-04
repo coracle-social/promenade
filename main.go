@@ -103,7 +103,6 @@ func main() {
 		Handler: cors.AllowAll().Handler(relay),
 	}
 	go func() {
-		server.ListenAndServe()
 		if err := server.ListenAndServe(); err != nil {
 			log.Error().Err(err).Msg("")
 		}
