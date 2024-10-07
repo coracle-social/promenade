@@ -12,7 +12,7 @@ build:
     just tailwind
     CC=musl-gcc go build -ldflags="-s -w -linkmode external -extldflags '-static' -X main.compileTimeTs=$(date '+%s') -s -w" -o ./promenade
 
-deploy: build
-    ssh root@turgot 'systemctl stop promenade'
-    scp promenade turgot:promenade/promenade
-    ssh root@turgot 'systemctl start promenade'
+deploy target: build
+    ssh root@{{target}} 'systemctl stop promenade'
+    scp promenade {{target}}:promenade/promenade
+    ssh root@{{target}} 'systemctl start promenade'
