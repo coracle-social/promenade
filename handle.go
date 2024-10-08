@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"slices"
 
-	"git.fiatjaf.com/multi-nip46/common"
+	"fiatjaf.com/promenade/common"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/fiatjaf/khatru"

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"time"
 
-	"git.fiatjaf.com/multi-nip46/common"
+	"fiatjaf.com/promenade/common"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr/musig2"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
@@ -50,7 +50,7 @@ var run = &cli.Command{
 		}
 
 		for ie := range mainEventStream {
-			func(ie nostr.IncomingEvent) {
+			func(ie nostr.RelayEvent) {
 				ctx, cancel := context.WithTimeout(bg, time.Second*10)
 				defer cancel()
 
