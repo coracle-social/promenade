@@ -5,12 +5,9 @@ import (
 )
 
 func TrustedDealerKeygen(
-	secretKey [32]byte,
+	secret *btcec.ModNScalar,
 	threshold, maxSigners int,
 ) ([]*KeyShare, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
-	secret := new(btcec.ModNScalar)
-	secret.SetBytes(&secretKey)
-
 	privateKeyShares, poly, err := shardReturnPolynomial(
 		secret,
 		threshold,

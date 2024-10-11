@@ -1,15 +1,18 @@
 package frost
 
 import (
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 type Configuration struct {
 	PublicKey             *btcec.JacobianPoint
-	SignerPublicKeyShares []*PublicKeyShare
+	SignerPublicKeyShares []PublicKeyShare
 	Threshold             int
 	MaxSigners            int
 	verified              bool
@@ -156,7 +159,7 @@ func (c *Configuration) verifyConfiguration() error {
 }
 
 func (c *Configuration) validatePoint(pt *btcec.JacobianPoint) error {
-	if pt != nil {
+	if pt == nil {
 		return fmt.Errorf("public key can't be nil")
 	}
 
@@ -169,6 +172,55 @@ func (c *Configuration) validatePoint(pt *btcec.JacobianPoint) error {
 	if G.X.Equals(&pt.X) || G.Y.Equals(&pt.Y) {
 		return fmt.Errorf("public key can't be G")
 	}
+
+	return nil
+}
+
+func (c *Configuration) Hex() string { return hex.EncodeToString(c.Encode()) }
+func (c *Configuration) DecodeHex(x string) error {
+	b, err := hex.DecodeString(x)
+	if err != nil {
+		return err
+	}
+	return c.Decode(b)
+}
+
+func (c *Configuration) Encode() []byte {
+	out := make([]byte, 6+33+len(c.SignerPublicKeyShares)*33)
+	binary.LittleEndian.PutUint16(out[0:2], uint16(c.Threshold))
+	binary.LittleEndian.PutUint16(out[2:4], uint16(c.MaxSigners))
+	binary.LittleEndian.PutUint16(out[4:6], uint16(len(c.SignerPublicKeyShares)))
+
+	if c.PublicKey.Y.IsOdd() {
+		out[6] = secp256k1.PubKeyFormatCompressedOdd
+	} else {
+		out[6] = secp256k1.PubKeyFormatCompressedEven
+	}
+	c.PublicKey.X.PutBytesUnchecked(out[7:])
+
+	curr := 6 + 33
+	for _, pks := range c.SignerPublicKeyShares {
+		curr += pks.EncodeTo(out[curr:])
+	}
+
+	return out
+}
+
+func (c *Configuration) Decode(in []byte) error {
+	if len(in) < 6+33 {
+		return nil
+	}
+
+	c.Threshold = int(binary.LittleEndian.Uint16(in[0:2]))
+	c.MaxSigners = int(binary.LittleEndian.Uint16(in[2:4]))
+	c.SignerPublicKeyShares = make([]PublicKeyShare, binary.LittleEndian.Uint16(in[4:6]))
+
+	pk, err := secp256k1.ParsePubKey(in[6 : 6+33])
+	if err != nil {
+		return err
+	}
+
+	pk.AsJacobian(c.PublicKey)
 
 	return nil
 }

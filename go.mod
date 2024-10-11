@@ -53,4 +53,5 @@ require (
 	golang.org/x/sys v0.26.0 // indirect
 )
 
+replace github.com/bytemare/ecc => ../ecc
 replace github.com/bytemare/frost => ../frost
