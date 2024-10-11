@@ -9,18 +9,13 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
-
-// SignatureShare represents a Signer's signature share and its identifier.
-type SignatureShare struct {
-	SignatureShare   *btcec.ModNScalar
-	SignerIdentifier int
-}
 
 // Signer is a participant in a signing group.
 type Signer struct {
 	// The KeyShare holds the signer's secret and public info, such as keys and identifier.
-	KeyShare *KeyShare
+	KeyShare KeyShare
 
 	// LambdaRegistry records all interpolating values for the signers for different combinations of participant
 	// groups. Each group makes up a unique polynomial defined by the participants' identifiers. A value will be
@@ -29,7 +24,7 @@ type Signer struct {
 	LambdaRegistry LambdaRegistry
 
 	// NonceCommitments maps Nonce and their NonceCommitments to their Commitment's identifier.
-	NonceCommitments map[uint64]*Nonce
+	NonceCommitments map[uint64]Nonce
 
 	// Configuration is the core FROST setup configuration.
 	Configuration *Configuration
@@ -40,11 +35,11 @@ type Signer struct {
 type Nonce struct {
 	HidingNonce  *btcec.ModNScalar
 	BindingNonce *btcec.ModNScalar
-	*Commitment
+	Commitment
 }
 
 func (s *Signer) clearNonceCommitment(commitmentID uint64) {
-	if com := s.NonceCommitments[commitmentID]; com != nil {
+	if com, ok := s.NonceCommitments[commitmentID]; ok {
 		com.HidingNonce.Zero()
 		com.BindingNonce.Zero()
 		com.HidingNonceCommitment.X.Zero()
@@ -75,17 +70,25 @@ func (s *Signer) generateNonce(
 	}
 	random = *xoredRandom
 
-	// k1
-	noncePreimage := make([]byte, 32+32+1)
+	// k1/k2 preparation
+	noncePreimage := make([]byte, 32+32+33+1)
 	copy(noncePreimage, random[:])
 	copy(noncePreimage[32:], secBytes[:])
-	noncePreimage[32+32] = 1
+	if pubkey.Y.IsOdd() {
+		noncePreimage[32+32] = secp256k1.PubKeyFormatCompressedOdd
+	} else {
+		noncePreimage[32+32] = secp256k1.PubKeyFormatCompressedEven
+	}
+	pubkey.X.PutBytesUnchecked(noncePreimage[32+32+1:])
+
+	// k1
+	noncePreimage[32+32+33] = 1
 	nonceHash1 := chainhash.TaggedHash([]byte("FROST/nonce"), noncePreimage)
 	k1 := new(btcec.ModNScalar)
 	k1.SetBytes((*[32]byte)(nonceHash1))
 
 	// k2
-	noncePreimage[32+32] = 2
+	noncePreimage[32+32+33] = 2
 	nonceHash2 := chainhash.TaggedHash([]byte("FROST/nonce"), noncePreimage)
 	k2 := new(btcec.ModNScalar)
 	k2.SetBytes((*[32]byte)(nonceHash2))
@@ -104,6 +107,7 @@ func (s *Signer) generateNonce(
 	btcec.ScalarBaseMultNonConst(k2, Rs2)
 	pt := new(btcec.JacobianPoint)
 	btcec.AddNonConst(Rs1, Rs2, pt)
+	pt.ToAffine()
 
 	return k1.Add(k2), pt
 }
@@ -136,17 +140,18 @@ func (s *Signer) genNonceID() uint64 {
 
 // Commit generates a signer's nonces and commitment, to be used in the second FROST round. The internal nonce must
 // be kept secret, and the returned commitment sent to the signature aggregator.
-func (s *Signer) Commit() *Commitment {
+func (s *Signer) Commit() Commitment {
 	cid := s.genNonceID()
 	secHN, pubHN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
 	secBN, pubBN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
-	com := &Commitment{
+
+	com := Commitment{
 		SignerID:               s.KeyShare.ID,
 		CommitmentID:           cid,
 		HidingNonceCommitment:  pubHN,
 		BindingNonceCommitment: pubBN,
 	}
-	s.NonceCommitments[cid] = &Nonce{
+	s.NonceCommitments[cid] = Nonce{
 		HidingNonce:  secHN,
 		BindingNonce: secBN,
 		Commitment:   com,
@@ -199,7 +204,7 @@ func (s *Signer) VerifyCommitmentList(commitments []Commitment) error {
 // Sign produces a participant's signature share of the message msg. The CommitmentList must contain a Commitment
 // produced on a previous call to Commit(). Once the signature share with Sign() is produced, the internal commitment
 // and nonces are cleared and another call to Sign() with the same Commitment will return an error.
-func (s *Signer) Sign(message []byte, commitments []Commitment) (*SignatureShare, error) {
+func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignature, error) {
 	slices.SortFunc(commitments, func(a, b Commitment) int { return cmp.Compare(a.SignerID, b.SignerID) })
 
 	if err := s.VerifyCommitmentList(commitments); err != nil {
@@ -222,7 +227,7 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*SignatureShare
 		message,
 	)
 	challengeScalar := new(btcec.ModNScalar)
-	challengeScalar.SetByteSlice((*challenge)[:])
+	challengeScalar.SetBytes((*[32]byte)(challenge))
 	lambdaChall := new(btcec.ModNScalar).Mul2(lambda, challengeScalar)
 
 	var commitment Commitment
@@ -246,8 +251,8 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*SignatureShare
 
 	s.clearNonceCommitment(commitmentID)
 
-	return &SignatureShare{
+	return &PartialSignature{
 		SignerIdentifier: s.KeyShare.ID,
-		SignatureShare:   sigShare,
+		PartialSignature: sigShare,
 	}, nil
 }

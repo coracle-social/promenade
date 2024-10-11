@@ -23,15 +23,6 @@ func (pe ParticipantError) Error() string {
 }
 
 func main() {
-	// message, _ := hex.DecodeString("a9ce7954b29e133b5eb06c331fe350593aa122f146e4cfc8b1aee89732c04880")
-	// key := ecc.Secp256k1Sha256.NewScalar()
-	// key.DecodeHex("a79fc3461f156c087eee20d8a79624a55cb02690eb062e871b824306b8f51894")
-	// sig, err := debug.Sign(frost.Secp256k1, message, key, nil)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// fmt.Println(sig.Hex()[4:])
-
 	flow(
 		context.Background(),
 		3,
@@ -55,16 +46,18 @@ func flow(
 		secret.SetByteSlice(s)
 	}
 
-	shards, pubkey, _ := frost.TrustedDealerKeygen(secret, threshold, totalSigners)
+	shards, pubkey, _ := frost.TrustedKeyDeal(secret, threshold, totalSigners)
 
-	pubkeyShares := make([]*frost.PublicKeyShare, len(shards))
+	pubkeyShares := make([]frost.PublicKeyShare, len(shards))
 	for s, shard := range shards {
 		shareableHex := shard.PublicKeyShare.Hex()
 
-		pubkeyShares[s] = &frost.PublicKeyShare{}
-		pubkeyShares[s].DecodeHex(shareableHex)
+		pubkeyShares[s] = frost.PublicKeyShare{}
+		if err := pubkeyShares[s].DecodeHex(shareableHex); err != nil {
+			panic(err)
+		}
 	}
-	fmt.Println("pubkey:", pubkey.Hex()[2:])
+	fmt.Println("pubkey:", hexPoint(pubkey)[2:])
 
 	// start signing process
 	cfg := &frost.Configuration{
@@ -93,7 +86,7 @@ func flow(
 	}
 
 	fmt.Println("message:", messageHex)
-	fmt.Println("signature:", sig)
+	fmt.Println("signature:", hex.EncodeToString(sig))
 }
 
 func coordinator(
@@ -101,29 +94,29 @@ func coordinator(
 	cfg *frost.Configuration,
 	signers []chan string,
 	messageHex string,
-) (string, error) {
+) ([]byte, error) {
 	// step-1 (send): initialize each participant
 	cfgHex := cfg.Hex()
 	for s, ch := range signers {
 		select {
 		case <-ctx.Done():
-			return "", ParticipantError{cfg, s, "timeout sending config"}
+			return nil, ParticipantError{cfg, s, "timeout sending config"}
 		case ch <- cfgHex:
 		}
 	}
 
 	// step-2 (receive): get all pre-commits from signers
-	commitments := make(frost.CommitmentList, cfg.Threshold)
+	commitments := make([]frost.Commitment, cfg.Threshold)
 	for s, ch := range signers {
 		select {
 		case <-ctx.Done():
-			return "", ParticipantError{cfg, s, "timeout receiving commit"}
+			return nil, ParticipantError{cfg, s, "timeout receiving commit"}
 		case msg := <-ch:
 			commit := frost.Commitment{}
 			if err := commit.DecodeHex(msg); err != nil {
-				return "", err
+				return nil, err
 			}
-			commitments[s] = &commit
+			commitments[s] = commit
 		}
 	}
 
@@ -135,28 +128,28 @@ func coordinator(
 			}
 			select {
 			case <-ctx.Done():
-				return "", ParticipantError{cfg, s, "timeout sending commit from other"}
+				return nil, ParticipantError{cfg, s, "timeout sending commit from other"}
 			case ch <- commit.Hex():
 			}
 		}
 
 		select {
 		case <-ctx.Done():
-			return "", ParticipantError{cfg, s, "timeout sending message"}
+			return nil, ParticipantError{cfg, s, "timeout sending message"}
 		case ch <- messageHex:
 		}
 	}
 
 	// step-4 (receive): get partial signature from each participant
-	partialSigs := make([]*frost.SignatureShare, len(signers))
+	partialSigs := make([]frost.PartialSignature, len(signers))
 	for s, ch := range signers {
 		select {
 		case <-ctx.Done():
-			return "", ParticipantError{cfg, s, "timeout receiving partial signature"}
+			return nil, ParticipantError{cfg, s, "timeout receiving partial signature"}
 		case msg := <-ch:
-			partialSig := &frost.SignatureShare{}
+			partialSig := frost.PartialSignature{}
 			if err := partialSig.DecodeHex(msg); err != nil {
-				return "", err
+				return nil, err
 			}
 			partialSigs[s] = partialSig
 		}
@@ -164,31 +157,32 @@ func coordinator(
 
 	// aggregate signature
 	message, _ := hex.DecodeString(messageHex)
-	signature, err := cfg.AggregateSignatures(message, partialSigs, commitments, false)
+	signature, err := cfg.AggregateSignatures(message, partialSigs, commitments)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// identify foul players if the signature is not good
-	if err = frost.VerifySignature(frost.Secp256k1, message, signature, cfg.VerificationKey); err != nil {
+	if ok := signature.Verify(message, btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
 		for s, partialSig := range partialSigs {
-			if err := cfg.VerifySignatureShare(partialSig, message, commitments); err != nil {
-				return "", ParticipantError{cfg, s, "invalid partial signature: " + err.Error()}
+			if err := cfg.VerifyPartialSignature(partialSig, message, commitments); err != nil {
+				return nil, ParticipantError{cfg, s, "invalid partial signature: " + err.Error()}
 			}
 		}
 
-		return "", fmt.Errorf("aggregate signature is bad: %w", err)
+		return nil, fmt.Errorf("aggregate signature %x is bad", signature.Serialize())
 	}
 
-	r := signature.R.Encode()[1:]
-	s := signature.Z.Encode()
-	return hex.EncodeToString(append(r, s...)), nil
+	return signature.Serialize(), nil
 }
 
-func signer(ch chan string, shard *KeyShare) {
+func signer(ch chan string, shard frost.KeyShare) {
 	// step-1 (receive): initialize ourselves
 	cfg := frost.Configuration{}
 	if err := cfg.DecodeHex(<-ch); err != nil {
+		panic(err)
+	}
+	if err := cfg.Init(); err != nil {
 		panic(err)
 	}
 
@@ -199,7 +193,7 @@ func signer(ch chan string, shard *KeyShare) {
 
 	// step-2 (send): send our pre-commit to coordinator
 	ourCommitment := signer.Commit()
-	commitments := make(frost.CommitmentList, 0, cfg.Threshold)
+	commitments := make([]frost.Commitment, 0, cfg.Threshold)
 	commitments = append(commitments, ourCommitment)
 	ch <- ourCommitment.Hex()
 
@@ -213,7 +207,7 @@ func signer(ch chan string, shard *KeyShare) {
 				panic(err)
 			}
 		} else {
-			commit := &frost.Commitment{}
+			commit := frost.Commitment{}
 			if err := commit.DecodeHex(msg); err != nil {
 				panic(err)
 			}

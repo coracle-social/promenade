@@ -6,9 +6,6 @@ require (
 	github.com/a-h/templ v0.2.543
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
-	github.com/bytemare/ecc v0.8.2
-	github.com/bytemare/frost v0.0.0-00010101000000-000000000000
-	github.com/bytemare/secret-sharing v0.7.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0
 	github.com/fiatjaf/khatru v0.3.1
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -22,19 +19,13 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.1.0 // indirect
-	filippo.io/nistec v0.0.3 // indirect
 	github.com/andybalholm/brotli v1.0.5 // indirect
-	github.com/bytemare/hash v0.3.0 // indirect
-	github.com/bytemare/hash2curve v0.3.0 // indirect
-	github.com/bytemare/secp256k1 v0.1.6 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/fasthttp/websocket v1.5.7 // indirect
 	github.com/fiatjaf/eventstore v0.9.0 // indirect
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	github.com/gtank/ristretto255 v0.1.2 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
@@ -52,6 +43,3 @@ require (
 	golang.org/x/net v0.21.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
 )
-
-replace github.com/bytemare/ecc => ../ecc
-replace github.com/bytemare/frost => ../frost

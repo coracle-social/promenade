@@ -2,6 +2,8 @@ package frost
 
 import (
 	"cmp"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -24,8 +26,8 @@ type Commitment struct {
 // - no duplicated in signer identifiers.
 // - all commitment signer identifiers are registered in the configuration.
 func (c *Configuration) ValidateCommitmentList(commitments []Commitment) error {
-	if !c.verified || !c.keysVerified {
-		return fmt.Errorf("Configuration must be initialized")
+	if !c.initialized {
+		return fmt.Errorf("configuration must be initialized")
 	}
 
 	if length := len(commitments); length < c.Threshold || length > c.MaxSigners {
@@ -39,7 +41,7 @@ func (c *Configuration) ValidateCommitmentList(commitments []Commitment) error {
 		}
 
 		// check for duplicate participant entries
-		for _, prev := range commitments {
+		for _, prev := range commitments[:i] {
 			if prev.SignerID == commitment.SignerID {
 				return fmt.Errorf("commitment list contains multiple commitments of participant %d", commitment.SignerID)
 			}
@@ -57,16 +59,12 @@ func (c *Configuration) ValidateCommitmentList(commitments []Commitment) error {
 }
 
 func (c *Configuration) ValidateCommitment(commitment Commitment) error {
-	if !c.verified || !c.keysVerified {
-		return fmt.Errorf("Configuration must be initialized")
+	if !c.initialized {
+		return fmt.Errorf("configuration must be initialized")
 	}
 
-	if commitment.SignerID == 0 {
-		return fmt.Errorf("identifier can't be zero")
-	}
-
-	if commitment.SignerID > c.MaxSigners {
-		return fmt.Errorf("identifier can't be bigger than the max number of signers")
+	if commitment.SignerID == 0 || commitment.SignerID > c.MaxSigners {
+		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
 	}
 
 	if err := c.validatePoint(commitment.HidingNonceCommitment); err != nil {
@@ -188,5 +186,63 @@ func groupCommitment(commitments []Commitment, bindingFactors map[int]*btcec.Mod
 		btcec.AddNonConst(bindingNonce, gc, gc)
 	}
 
+	gc.ToAffine()
 	return gc
+}
+
+func (c Commitment) Hex() string { return hex.EncodeToString(c.Encode()) }
+func (c *Commitment) DecodeHex(x string) error {
+	b, err := hex.DecodeString(x)
+	if err != nil {
+		return err
+	}
+	return c.Decode(b)
+}
+
+func (c Commitment) Encode() []byte {
+	out := make([]byte, 33+33+8+2)
+
+	if c.BindingNonceCommitment.Y.IsOdd() {
+		out[0] = secp256k1.PubKeyFormatCompressedOdd
+	} else {
+		out[0] = secp256k1.PubKeyFormatCompressedEven
+	}
+	c.BindingNonceCommitment.X.PutBytesUnchecked(out[1:])
+
+	if c.HidingNonceCommitment.Y.IsOdd() {
+		out[33] = secp256k1.PubKeyFormatCompressedOdd
+	} else {
+		out[33] = secp256k1.PubKeyFormatCompressedEven
+	}
+	c.HidingNonceCommitment.X.PutBytesUnchecked(out[33+1:])
+
+	binary.LittleEndian.PutUint64(out[33+33:], c.CommitmentID)
+	binary.LittleEndian.PutUint16(out[33+33+8:], uint16(c.SignerID))
+
+	return out
+}
+
+func (c *Commitment) Decode(in []byte) error {
+	if len(in) < 33+33+8+2 {
+		return fmt.Errorf("too small")
+	}
+
+	if pt, err := btcec.ParsePubKey(in[0:33]); err != nil {
+		return fmt.Errorf("failed to decode binding nonce: %w", err)
+	} else {
+		c.BindingNonceCommitment = new(btcec.JacobianPoint)
+		pt.AsJacobian(c.BindingNonceCommitment)
+	}
+
+	if pt, err := btcec.ParsePubKey(in[33 : 33+33]); err != nil {
+		return fmt.Errorf("failed to decode hiding nonce: %w", err)
+	} else {
+		c.HidingNonceCommitment = new(btcec.JacobianPoint)
+		pt.AsJacobian(c.HidingNonceCommitment)
+	}
+
+	c.CommitmentID = binary.LittleEndian.Uint64(in[33+33:])
+	c.SignerID = int(binary.LittleEndian.Uint16(in[33+33+8:]))
+
+	return nil
 }

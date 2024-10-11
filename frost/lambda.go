@@ -108,14 +108,14 @@ func (l LambdaRegistry) Delete(participants []int) {
 }
 
 // Decode populates the receiver from the byte encoded serialization in data.
-func (l LambdaRegistry) Decode(data []byte) error {
+func (l LambdaRegistry) Decode(in []byte) error {
 	offset := 0
-	for offset < len(data) {
-		key := data[offset : offset+32]
+	for offset < len(in) {
+		key := in[offset : offset+32]
 		offset += 32
 
 		value := new(btcec.ModNScalar)
-		value.SetByteSlice(data[offset : offset+32])
+		value.SetBytes((*[32]byte)(in[offset : offset+32]))
 
 		l[hex.EncodeToString(key)] = &Lambda{
 			Value: value,

@@ -3,7 +3,6 @@ package frost
 import (
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -15,56 +14,45 @@ type Configuration struct {
 	SignerPublicKeyShares []PublicKeyShare
 	Threshold             int
 	MaxSigners            int
-	verified              bool
-	keysVerified          bool
+
+	initialized bool
 }
 
 // Init verifies whether the configuration's components are valid, in which case it initializes internal values, or
 // returns an error otherwise.
 func (c *Configuration) Init() error {
-	if !c.verified {
-		if err := c.verifyConfiguration(); err != nil {
-			return err
-		}
+	if err := c.verifyConfiguration(); err != nil {
+		return fmt.Errorf("error verifying configuration: %w", err)
 	}
 
-	if !c.keysVerified {
-		if err := c.verifySignerPublicKeyShares(); err != nil {
-			return err
-		}
+	if err := c.verifySignerPublicKeyShares(); err != nil {
+		return fmt.Errorf("error verifying public key shares: %w", err)
 	}
+
+	c.initialized = true
 
 	return nil
 }
 
 // Signer returns a new participant of the protocol instantiated from the Configuration and the signer's key share.
-func (c *Configuration) Signer(keyShare *KeyShare) (*Signer, error) {
-	if !c.verified || !c.keysVerified {
-		return nil, fmt.Errorf("Configuration must be initialized")
+func (c *Configuration) Signer(keyshare KeyShare) (*Signer, error) {
+	if !c.initialized {
+		return nil, fmt.Errorf("configuration must be initialized")
 	}
 
-	if err := c.ValidateKeyShare(keyShare); err != nil {
+	if err := c.ValidateKeyShare(keyshare); err != nil {
 		return nil, err
 	}
 
 	return &Signer{
-		KeyShare:         keyShare,
-		NonceCommitments: make(map[uint64]*Nonce),
+		LambdaRegistry:   make(LambdaRegistry),
+		KeyShare:         keyshare,
+		NonceCommitments: make(map[uint64]Nonce),
 		Configuration:    c,
 	}, nil
 }
 
-func (c *Configuration) ValidatePublicKeyShare(pks *PublicKeyShare) error {
-	if !c.verified {
-		if err := c.verifyConfiguration(); err != nil {
-			return err
-		}
-	}
-
-	if pks == nil {
-		return errors.New("public key share is nil")
-	}
-
+func (c *Configuration) ValidatePublicKeyShare(pks PublicKeyShare) error {
 	if pks.ID == 0 {
 		return fmt.Errorf("identifier can't be zero")
 	}
@@ -80,32 +68,46 @@ func (c *Configuration) ValidatePublicKeyShare(pks *PublicKeyShare) error {
 	return nil
 }
 
-func (c *Configuration) ValidateKeyShare(keyShare *KeyShare) error {
-	if !c.verified || !c.keysVerified {
+func (c *Configuration) ValidateKeyShare(keyshare KeyShare) error {
+	if !c.initialized {
 		return fmt.Errorf("Configuration must be initialized")
 	}
 
-	if keyShare == nil {
-		return fmt.Errorf("provided key share is nil")
-	}
-
-	if err := c.ValidatePublicKeyShare(&keyShare.PublicKeyShare); err != nil {
+	if err := c.ValidatePublicKeyShare(keyshare.PublicKeyShare); err != nil {
 		return err
 	}
 
-	if !c.PublicKey.X.Equals(&keyShare.PublicKey.X) || !c.PublicKey.Y.Equals(&keyShare.PublicKey.Y) {
+	if !c.PublicKey.X.Equals(&keyshare.PublicKey.X) || !c.PublicKey.Y.Equals(&keyshare.PublicKey.Y) {
 		return fmt.Errorf("provided key share has a different public key than the one registered for that signer in the configuration")
 	}
 
-	if keyShare.Secret == nil || keyShare.Secret.IsZero() {
+	if keyshare.Secret == nil || keyshare.Secret.IsZero() {
 		return fmt.Errorf("provided secret is nil or zero")
 	}
 
 	pt := new(btcec.JacobianPoint)
-	btcec.ScalarBaseMultNonConst(keyShare.Secret, pt)
+	btcec.ScalarBaseMultNonConst(keyshare.Secret, pt)
+	pt.ToAffine()
 
-	if !pt.X.Equals(&keyShare.PublicKey.X) || !pt.Y.Equals(&keyShare.PublicKey.Y) {
-		return fmt.Errorf("provided key share has a public key that doesn't match its own secret key")
+	if !pt.X.Equals(&keyshare.PublicKeyShare.PublicKey.X) || !pt.Y.Equals(&keyshare.PublicKeyShare.PublicKey.Y) {
+		public := make([]byte, 33)
+		if keyshare.PublicKey.Y.IsOdd() {
+			public[0] = secp256k1.PubKeyFormatCompressedOdd
+		} else {
+			public[0] = secp256k1.PubKeyFormatCompressedOdd
+		}
+		keyshare.PublicKey.X.PutBytesUnchecked(public[1:])
+
+		derived := make([]byte, 33)
+		if pt.Y.IsOdd() {
+			derived[0] = secp256k1.PubKeyFormatCompressedOdd
+		} else {
+			derived[0] = secp256k1.PubKeyFormatCompressedOdd
+		}
+		pt.X.PutBytesUnchecked(derived[1:])
+
+		return fmt.Errorf("provided key share has a public key (%x) that doesn't match its own secret key (%x)",
+			public, derived)
 	}
 
 	return nil
@@ -118,17 +120,13 @@ func (c *Configuration) verifySignerPublicKeyShares() error {
 			length, c.Threshold, c.MaxSigners)
 	}
 
-	for i, pks := range c.SignerPublicKeyShares {
-		if pks == nil {
-			return fmt.Errorf("empty public key share at index %d", i)
-		}
-
+	for p, pks := range c.SignerPublicKeyShares {
 		if err := c.ValidatePublicKeyShare(pks); err != nil {
-			return err
+			return fmt.Errorf("error validating public key shares: %w", err)
 		}
 
 		// verify whether the ID or public key have duplicates
-		for _, prev := range c.SignerPublicKeyShares {
+		for _, prev := range c.SignerPublicKeyShares[0:p] {
 			if prev.ID == pks.ID {
 				return fmt.Errorf("found duplicate identifier for signer %d", pks.ID)
 			}
@@ -137,8 +135,6 @@ func (c *Configuration) verifySignerPublicKeyShares() error {
 			}
 		}
 	}
-
-	c.keysVerified = true
 
 	return nil
 }
@@ -152,8 +148,6 @@ func (c *Configuration) verifyConfiguration() error {
 	if err := c.validatePoint(c.PublicKey); err != nil {
 		return fmt.Errorf("invalid group public key: %w", err)
 	}
-
-	c.verified = true
 
 	return nil
 }
@@ -186,7 +180,8 @@ func (c *Configuration) DecodeHex(x string) error {
 }
 
 func (c *Configuration) Encode() []byte {
-	out := make([]byte, 6+33+len(c.SignerPublicKeyShares)*33)
+	out := make([]byte, 6+33, 6+33+len(c.SignerPublicKeyShares)*(6+33+33*c.Threshold))
+
 	binary.LittleEndian.PutUint16(out[0:2], uint16(c.Threshold))
 	binary.LittleEndian.PutUint16(out[2:4], uint16(c.MaxSigners))
 	binary.LittleEndian.PutUint16(out[4:6], uint16(len(c.SignerPublicKeyShares)))
@@ -198,9 +193,8 @@ func (c *Configuration) Encode() []byte {
 	}
 	c.PublicKey.X.PutBytesUnchecked(out[7:])
 
-	curr := 6 + 33
 	for _, pks := range c.SignerPublicKeyShares {
-		curr += pks.EncodeTo(out[curr:])
+		out = append(out, pks.Encode()...)
 	}
 
 	return out
@@ -208,19 +202,29 @@ func (c *Configuration) Encode() []byte {
 
 func (c *Configuration) Decode(in []byte) error {
 	if len(in) < 6+33 {
-		return nil
+		return fmt.Errorf("too small")
 	}
 
 	c.Threshold = int(binary.LittleEndian.Uint16(in[0:2]))
 	c.MaxSigners = int(binary.LittleEndian.Uint16(in[2:4]))
 	c.SignerPublicKeyShares = make([]PublicKeyShare, binary.LittleEndian.Uint16(in[4:6]))
 
-	pk, err := secp256k1.ParsePubKey(in[6 : 6+33])
-	if err != nil {
-		return err
+	if pk, err := secp256k1.ParsePubKey(in[6 : 6+33]); err != nil {
+		return fmt.Errorf("failed to decode pubkey: %w", err)
+	} else {
+		c.PublicKey = new(btcec.JacobianPoint)
+		pk.AsJacobian(c.PublicKey)
 	}
 
-	pk.AsJacobian(c.PublicKey)
+	curr := 6 + 33
+	for i := range c.SignerPublicKeyShares {
+		n, err := c.SignerPublicKeyShares[i].Decode(in[curr:])
+		if err != nil {
+			return fmt.Errorf("failed to decode pubkey share %d: %w", i, err)
+		}
+
+		curr += n
+	}
 
 	return nil
 }

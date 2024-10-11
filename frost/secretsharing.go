@@ -15,7 +15,7 @@ type Polynomial []*btcec.ModNScalar
 func shardReturnPolynomial(
 	secret *btcec.ModNScalar,
 	threshold, maxParticipants int,
-) ([]*KeyShare, Polynomial, error) {
+) ([]KeyShare, Polynomial, error) {
 	if maxParticipants < threshold {
 		return nil, nil, fmt.Errorf("wrong number of shares")
 	}
@@ -27,12 +27,13 @@ func shardReturnPolynomial(
 
 	pubkey := &btcec.JacobianPoint{}
 	btcec.ScalarBaseMultNonConst(p[0], pubkey)
+	pubkey.ToAffine()
 
 	// Evaluate the polynomial for each point x=1,...,n
-	secretKeyShares := make([]*KeyShare, maxParticipants)
+	secretKeyShares := make([]KeyShare, maxParticipants)
 
-	for i := 1; i <= maxParticipants; i++ {
-		secretKeyShares[i-1] = makeKeyShare(i, p, pubkey)
+	for i := 0; i < maxParticipants; i++ {
+		secretKeyShares[i] = makeKeyShare(i+1, p, pubkey)
 	}
 
 	return secretKeyShares, p, nil
@@ -50,12 +51,14 @@ func makePolynomial(secret *btcec.ModNScalar, threshold int) (Polynomial, error)
 
 	i := 0
 
+	p[0] = new(btcec.ModNScalar)
 	p[0].Set(secret)
 	i++
 
 	for ; i < threshold; i++ {
 		var random [32]byte
 		rand.Read(random[:])
+		p[i] = new(btcec.ModNScalar)
 		p[i].SetBytes(&random)
 	}
 
@@ -71,13 +74,15 @@ func makePolynomialFromListFunc[S ~[]E, E any](s S, f func(E) *btcec.ModNScalar)
 	return polynomial
 }
 
-func makeKeyShare(id int, p Polynomial, pubkey *btcec.JacobianPoint) *KeyShare {
+func makeKeyShare(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShare {
 	ids := new(btcec.ModNScalar).SetInt(uint32(id))
 	yi := p.Evaluate(ids)
-	pksh := &btcec.JacobianPoint{}
-	btcec.ScalarBaseMultNonConst(yi, pksh)
 
-	return &KeyShare{
+	pksh := new(btcec.JacobianPoint)
+	btcec.ScalarBaseMultNonConst(yi, pksh)
+	pksh.ToAffine()
+
+	return KeyShare{
 		Secret:    yi,
 		PublicKey: pubkey,
 		PublicKeyShare: PublicKeyShare{
@@ -109,6 +114,7 @@ func VSSCommit(polynomial Polynomial) VssCommitment {
 	for i, coeff := range polynomial {
 		pt := &btcec.JacobianPoint{}
 		btcec.ScalarBaseMultNonConst(coeff, pt)
+		pt.ToAffine()
 		coms[i] = pt
 	}
 
