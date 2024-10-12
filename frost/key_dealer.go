@@ -8,6 +8,15 @@ func TrustedKeyDeal(
 	secret *btcec.ModNScalar,
 	threshold, maxSigners int,
 ) ([]KeyShare, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
+	// negate this here before splitting the key if Y is odd because of bip-340
+	privateKey := btcec.PrivKeyFromScalar(secret)
+	pubkey := new(btcec.JacobianPoint)
+	privateKey.PubKey().AsJacobian(pubkey)
+	if pubkey.Y.IsOdd() {
+		secret.Negate()
+	}
+	// ~
+
 	privateKeyShares, poly, err := shardReturnPolynomial(
 		secret,
 		threshold,
@@ -17,25 +26,8 @@ func TrustedKeyDeal(
 		panic(err)
 	}
 
-	coms := VSSCommit(poly)
+	commits := VSSCommit(poly)
+	pubkey = commits[0]
 
-	// shares := make([]KeyShare, maxSigners)
-	// for i, k := range privateKeyShares {
-	// 	pks := &btcec.JacobianPoint{}
-	// 	btcec.ScalarBaseMultNonConst(k.Secret, pks)
-	// 	pks.ToAffine()
-	// 	fmt.Printf("%x => %x\n", k.Secret.Bytes(), *pks.X.Bytes())
-
-	// 	shares[i] = KeyShare{
-	// 		Secret:    k.Secret,
-	// 		PublicKey: coms[0],
-	// 		PublicKeyShare: PublicKeyShare{
-	// 			PublicKey:     pks,
-	// 			VssCommitment: coms,
-	// 			ID:            k.ID,
-	// 		},
-	// 	}
-	// }
-
-	return privateKeyShares, coms[0], coms
+	return privateKeyShares, pubkey, commits
 }

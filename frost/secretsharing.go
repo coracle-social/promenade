@@ -110,13 +110,12 @@ type VssCommitment []*btcec.JacobianPoint
 // Commit builds a Verifiable Secret Sharing vector VssCommitment to each of the coefficients
 // (of threshold length which uniquely determines the polynomial).
 func VSSCommit(polynomial Polynomial) VssCommitment {
-	coms := make(VssCommitment, len(polynomial))
+	commits := make(VssCommitment, len(polynomial))
 	for i, coeff := range polynomial {
 		pt := &btcec.JacobianPoint{}
 		btcec.ScalarBaseMultNonConst(coeff, pt)
 		pt.ToAffine()
-		coms[i] = pt
+		commits[i] = pt
 	}
-
-	return coms
+	return commits
 }
