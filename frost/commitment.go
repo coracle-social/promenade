@@ -8,7 +8,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 // Commitment is a participant's one-time commitment holding its identifier, and hiding and binding nonces.
@@ -104,23 +103,21 @@ func commitmentsBindingFactors(
 	message []byte,
 ) map[int]*btcec.ModNScalar {
 	coms := commitmentsWithEncodedID(commitments)
+
 	encodedCommitHash := chainhash.TaggedHash([]byte("FROST/bf1"), encodeCommitmentList(coms))
 	h := chainhash.TaggedHash([]byte("FROST/bf2"), message)
 
 	rhoInputPrefix := make([]byte, 33+32+32)
 
-	if publicKey.Y.IsOdd() {
-		rhoInputPrefix[0] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		rhoInputPrefix[1] = secp256k1.PubKeyFormatCompressedEven
-	}
-	publicKey.X.PutBytesUnchecked(rhoInputPrefix[1:])
+	writePointTo(rhoInputPrefix[0:33], publicKey)
 	copy(rhoInputPrefix[33:], h[:])
 	copy(rhoInputPrefix[33+32:], encodedCommitHash[:])
 
 	bindingFactors := make(map[int]*btcec.ModNScalar, len(commitments))
 
+	pre := ""
 	for _, com := range coms {
+		pre += "  "
 		hash := chainhash.TaggedHash([]byte("FROST/rho"), rhoInputPrefix, com.ParticipantID[:])
 		bf := new(btcec.ModNScalar)
 		bf.SetBytes((*[32]byte)(hash))
@@ -156,19 +153,8 @@ func encodeCommitmentList(commitments []commitmentWithEncodedID) []byte {
 
 		copy(encoded[base:], com.ParticipantID[:])
 
-		if com.HidingNonceCommitment.Y.IsOdd() {
-			encoded[base+32] = secp256k1.PubKeyFormatCompressedOdd
-		} else {
-			encoded[base+32] = secp256k1.PubKeyFormatCompressedEven
-		}
-		com.HidingNonceCommitment.X.PutBytesUnchecked(encoded[base+32+1:])
-
-		if com.BindingNonceCommitment.Y.IsOdd() {
-			encoded[base+32] = secp256k1.PubKeyFormatCompressedOdd
-		} else {
-			encoded[base+32] = secp256k1.PubKeyFormatCompressedEven
-		}
-		com.BindingNonceCommitment.X.PutBytesUnchecked(encoded[base+32+1:])
+		writePointTo(encoded[base+32:base+32+33], com.HidingNonceCommitment)
+		writePointTo(encoded[base+32+33:base+32+33+33], com.BindingNonceCommitment)
 	}
 
 	return encoded
@@ -183,6 +169,8 @@ func groupCommitment(commitments []Commitment, bindingFactors map[int]*btcec.Mod
 		bindingNonce := new(btcec.JacobianPoint)
 		bindingNonce.Set(com.BindingNonceCommitment)
 		btcec.ScalarMultNonConst(factor, bindingNonce, bindingNonce)
+
+		btcec.AddNonConst(com.BindingNonceCommitment, gc, gc)
 		btcec.AddNonConst(bindingNonce, gc, gc)
 	}
 
@@ -200,49 +188,38 @@ func (c *Commitment) DecodeHex(x string) error {
 }
 
 func (c Commitment) Encode() []byte {
-	out := make([]byte, 33+33+8+2)
+	out := make([]byte, 8+2+33+33)
 
-	if c.BindingNonceCommitment.Y.IsOdd() {
-		out[0] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		out[0] = secp256k1.PubKeyFormatCompressedEven
-	}
-	c.BindingNonceCommitment.X.PutBytesUnchecked(out[1:])
+	binary.LittleEndian.PutUint64(out[0:8], c.CommitmentID)
+	binary.LittleEndian.PutUint16(out[8:8+2], uint16(c.SignerID))
 
-	if c.HidingNonceCommitment.Y.IsOdd() {
-		out[33] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		out[33] = secp256k1.PubKeyFormatCompressedEven
-	}
-	c.HidingNonceCommitment.X.PutBytesUnchecked(out[33+1:])
-
-	binary.LittleEndian.PutUint64(out[33+33:], c.CommitmentID)
-	binary.LittleEndian.PutUint16(out[33+33+8:], uint16(c.SignerID))
+	writePointTo(out[8+2:8+2+33], c.BindingNonceCommitment)
+	writePointTo(out[8+2+33:8+2+33+33], c.HidingNonceCommitment)
 
 	return out
 }
 
 func (c *Commitment) Decode(in []byte) error {
-	if len(in) < 33+33+8+2 {
+	if len(in) < 8+2+33+33 {
 		return fmt.Errorf("too small")
 	}
 
-	if pt, err := btcec.ParsePubKey(in[0:33]); err != nil {
+	c.CommitmentID = binary.LittleEndian.Uint64(in[0:8])
+	c.SignerID = int(binary.LittleEndian.Uint16(in[8 : 8+2]))
+
+	if pt, err := btcec.ParsePubKey(in[8+2 : 8+2+33]); err != nil {
 		return fmt.Errorf("failed to decode binding nonce: %w", err)
 	} else {
 		c.BindingNonceCommitment = new(btcec.JacobianPoint)
 		pt.AsJacobian(c.BindingNonceCommitment)
 	}
 
-	if pt, err := btcec.ParsePubKey(in[33 : 33+33]); err != nil {
+	if pt, err := btcec.ParsePubKey(in[8+2+33 : 8+2+33+33]); err != nil {
 		return fmt.Errorf("failed to decode hiding nonce: %w", err)
 	} else {
 		c.HidingNonceCommitment = new(btcec.JacobianPoint)
 		pt.AsJacobian(c.HidingNonceCommitment)
 	}
-
-	c.CommitmentID = binary.LittleEndian.Uint64(in[33+33:])
-	c.SignerID = int(binary.LittleEndian.Uint16(in[33+33+8:]))
 
 	return nil
 }

@@ -38,7 +38,6 @@ func (c *Configuration) AggregateSignatures(
 		return nil, err
 	}
 
-	// Aggregate signatures.
 	signature, err := c.sumShares(partialSigs, groupCommitment)
 	if err != nil {
 		return nil, err
@@ -186,10 +185,10 @@ type PartialSignature struct {
 }
 
 func (s *PartialSignature) Encode() []byte {
-	out := make([]byte, 32+2)
+	out := make([]byte, 2+32)
 
-	s.PartialSignature.PutBytesUnchecked(out)
-	binary.LittleEndian.PutUint16(out[32:], uint16(s.SignerIdentifier))
+	binary.LittleEndian.PutUint16(out[0:2], uint16(s.SignerIdentifier))
+	s.PartialSignature.PutBytesUnchecked(out[2:])
 
 	return out
 }
@@ -199,10 +198,10 @@ func (s *PartialSignature) Decode(in []byte) error {
 		return fmt.Errorf("too small")
 	}
 
-	s.PartialSignature = new(btcec.ModNScalar)
-	s.PartialSignature.SetBytes((*[32]byte)(in[0:32]))
+	s.SignerIdentifier = int(binary.LittleEndian.Uint16(in[0:2]))
 
-	s.SignerIdentifier = int(binary.LittleEndian.Uint16(in[32:]))
+	s.PartialSignature = new(btcec.ModNScalar)
+	s.PartialSignature.SetBytes((*[32]byte)(in[2 : 2+32]))
 
 	return nil
 }

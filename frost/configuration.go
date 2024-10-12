@@ -186,12 +186,7 @@ func (c *Configuration) Encode() []byte {
 	binary.LittleEndian.PutUint16(out[2:4], uint16(c.MaxSigners))
 	binary.LittleEndian.PutUint16(out[4:6], uint16(len(c.SignerPublicKeyShares)))
 
-	if c.PublicKey.Y.IsOdd() {
-		out[6] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		out[6] = secp256k1.PubKeyFormatCompressedEven
-	}
-	c.PublicKey.X.PutBytesUnchecked(out[7:])
+	writePointTo(out[6:], c.PublicKey)
 
 	for _, pks := range c.SignerPublicKeyShares {
 		out = append(out, pks.Encode()...)

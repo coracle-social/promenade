@@ -9,7 +9,6 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 // Signer is a participant in a signing group.
@@ -74,12 +73,8 @@ func (s *Signer) generateNonce(
 	noncePreimage := make([]byte, 32+32+33+1)
 	copy(noncePreimage, random[:])
 	copy(noncePreimage[32:], secBytes[:])
-	if pubkey.Y.IsOdd() {
-		noncePreimage[32+32] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		noncePreimage[32+32] = secp256k1.PubKeyFormatCompressedEven
-	}
-	pubkey.X.PutBytesUnchecked(noncePreimage[32+32+1:])
+
+	writePointTo(noncePreimage[32+32:], pubkey)
 
 	// k1
 	noncePreimage[32+32+33] = 1
@@ -144,6 +139,16 @@ func (s *Signer) Commit() Commitment {
 	cid := s.genNonceID()
 	secHN, pubHN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
 	secBN, pubBN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
+
+	x := make([]byte, 32)
+	x[0] = 6
+	secHN.SetByteSlice(x)
+	btcec.ScalarBaseMultNonConst(secHN, pubHN)
+	pubHN.ToAffine()
+
+	secBN.SetByteSlice(x)
+	btcec.ScalarBaseMultNonConst(secBN, pubBN)
+	pubBN.ToAffine()
 
 	com := Commitment{
 		SignerID:               s.KeyShare.ID,

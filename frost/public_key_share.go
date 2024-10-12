@@ -36,12 +36,7 @@ func (p PublicKeyShare) Encode() []byte {
 	binary.LittleEndian.PutUint16(out[0:2], uint16(p.ID))
 	binary.LittleEndian.PutUint32(out[2:6], uint32(len(p.VssCommitment)))
 
-	if p.PublicKey.Y.IsOdd() {
-		out[6] = secp256k1.PubKeyFormatCompressedOdd
-	} else {
-		out[6] = secp256k1.PubKeyFormatCompressedEven
-	}
-	p.PublicKey.X.PutBytesUnchecked(out[7:])
+	writePointTo(out[6:], p.PublicKey)
 
 	for i, c := range p.VssCommitment {
 		if c.Y.IsOdd() {
