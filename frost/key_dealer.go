@@ -31,3 +31,5 @@ func TrustedKeyDeal(
 
 	return privateKeyShares, pubkey, commits
 }
+
+// TODO allow each receiver of a share to verify if they were handled a correct thing
