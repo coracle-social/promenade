@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"slices"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -84,15 +85,14 @@ func (c *Configuration) ValidateCommitment(commitment Commitment) error {
 		)
 	}
 
-	// Validate that the commitment comes from a registered signer.
-	// TODO
-	// if !c.isSignerRegistered(commitment.SignerID) {
-	// 	return fmt.Errorf(
-	// 		"signer identifier %d for commitment %d is not registered in the configuration",
-	// 		commitment.SignerID,
-	// 		commitment.CommitmentID,
-	// 	)
-	// }
+	// validate that the commitment comes from a registered signer.
+	if !slices.ContainsFunc(c.SignerPublicKeyShares, func(s PublicKeyShare) bool { return s.ID == commitment.SignerID }) {
+		return fmt.Errorf(
+			"signer identifier %d for commitment %d is not registered in the configuration",
+			commitment.SignerID,
+			commitment.CommitmentID,
+		)
+	}
 
 	return nil
 }
@@ -170,7 +170,7 @@ func groupCommitment(commitments []Commitment, bindingFactors map[int]*btcec.Mod
 		bindingNonce.Set(com.BindingNonceCommitment)
 		btcec.ScalarMultNonConst(factor, bindingNonce, bindingNonce)
 
-		btcec.AddNonConst(com.BindingNonceCommitment, gc, gc)
+		btcec.AddNonConst(com.HidingNonceCommitment, gc, gc)
 		btcec.AddNonConst(bindingNonce, gc, gc)
 	}
 

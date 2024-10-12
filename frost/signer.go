@@ -107,29 +107,19 @@ func (s *Signer) generateNonce(
 	return k1.Add(k2), pt
 }
 
-func randomCommitmentID() uint64 {
-	buf := make([]byte, 8)
-
-	// In the extremely rare and unlikely case the CSPRNG returns, panic. It's over.
-	if _, err := rand.Read(buf); err != nil {
-		panic(fmt.Errorf("FATAL: %w", err))
-	}
-
-	return binary.LittleEndian.Uint64(buf)
-}
-
 func (s *Signer) genNonceID() uint64 {
-	var cid uint64
-
-	// In the extremely rare and unlikely case the CSPRNG returns an already registered ID, we try again 128 times max
-	// before failing. CSPRNG is a serious issue at which point protocol execution must be stopped.
 	for range 128 {
-		cid = randomCommitmentID()
+		buf := make([]byte, 8)
+		if _, err := rand.Read(buf); err != nil {
+			// this cannot fail
+			panic(fmt.Errorf("FATAL: %w", err))
+		}
+
+		cid := binary.LittleEndian.Uint64(buf)
 		if _, exists := s.NonceCommitments[cid]; !exists {
 			return cid
 		}
 	}
-
 	panic("FATAL: CSPRNG could not generate unique commitment identifiers over 128 iterations")
 }
 
@@ -139,16 +129,6 @@ func (s *Signer) Commit() Commitment {
 	cid := s.genNonceID()
 	secHN, pubHN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
 	secBN, pubBN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
-
-	x := make([]byte, 32)
-	x[0] = 6
-	secHN.SetByteSlice(x)
-	btcec.ScalarBaseMultNonConst(secHN, pubHN)
-	pubHN.ToAffine()
-
-	secBN.SetByteSlice(x)
-	btcec.ScalarBaseMultNonConst(secBN, pubBN)
-	pubBN.ToAffine()
 
 	com := Commitment{
 		SignerID:               s.KeyShare.ID,
@@ -206,26 +186,44 @@ func (s *Signer) VerifyCommitmentList(commitments []Commitment) error {
 	return s.verifyNonces(commitments[cidx])
 }
 
-// Sign produces a participant's signature share of the message msg. The CommitmentList must contain a Commitment
-// produced on a previous call to Commit(). Once the signature share with Sign() is produced, the internal commitment
-// and nonces are cleared and another call to Sign() with the same Commitment will return an error.
+// Sign basically executes steps 3-6 of figure 3: https://eprint.iacr.org/2020/852.pdf (page 15)
 func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignature, error) {
+	// 3. After receiving (m, B), each Pi first validates the message m, and then checks
+	// D`, E` ∈ G∗ for each commitment in B, aborting if either check fails.
 	slices.SortFunc(commitments, func(a, b Commitment) int { return cmp.Compare(a.SignerID, b.SignerID) })
-
 	if err := s.VerifyCommitmentList(commitments); err != nil {
 		return nil, err
 	}
 
-	bindingFactors := commitmentsBindingFactors(commitments, s.Configuration.PublicKey, message)
-	groupCommitment := groupCommitment(commitments, bindingFactors)
-
-	participants := make([]int, len(commitments))
-	for i, c := range commitments {
-		participants[i] = c.SignerID
+	// (just get our nonces for using later)
+	var ourNonces Nonce
+	for _, commit := range commitments {
+		if commit.SignerID == s.KeyShare.ID {
+			commitmentID := commit.CommitmentID
+			ourNonces = s.NonceCommitments[commitmentID]
+			break
+		}
 	}
 
-	lambda := s.LambdaRegistry.GetOrNew(s.KeyShare.ID, participants)
+	// 4. Each Pi then computes the set of binding values ρ` = H1(`, m, B), ` ∈ S.
+	bindingFactors := commitmentsBindingFactors(commitments, s.Configuration.PublicKey, message)
+	// ...Each Pi then derives the group commitment R = Q `∈S D` · (E`) ρ` ,
+	groupCommitment := groupCommitment(commitments, bindingFactors)
 
+	// BIP-340 -- because Bitcoin is so great we have to invert stuff here
+	if groupCommitment.Y.IsOdd() {
+		ourNonces.BindingNonce.Negate()
+		ourNonces.HidingNonce.Negate()
+		for _, commit := range commitments {
+			commit.BindingNonceCommitment.Y.Negate(1)
+			commit.BindingNonceCommitment.Y.Normalize()
+			commit.HidingNonceCommitment.Y.Negate(1)
+			commit.HidingNonceCommitment.Y.Normalize()
+		}
+	}
+	// ~
+
+	// ...and the challenge c = H2(R, Y, m).
 	challenge := chainhash.TaggedHash(chainhash.TagBIP0340Challenge,
 		groupCommitment.X.Bytes()[:],
 		s.Configuration.PublicKey.X.Bytes()[:],
@@ -233,31 +231,36 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignatu
 	)
 	challengeScalar := new(btcec.ModNScalar)
 	challengeScalar.SetBytes((*[32]byte)(challenge))
-	lambdaChall := new(btcec.ModNScalar).Mul2(lambda, challengeScalar)
 
-	var commitment Commitment
-	for _, com := range commitments {
-		if com.SignerID == s.KeyShare.ID {
-			commitment = com
-			break
-		}
+	// 5. Each Pi computes their response using their long-lived secret share si by computing
+	// zi = di + (ei · ρi) + λi · si · c, using S to determine the i th Lagrange coefficient λi.
+	participants := make([]int, len(commitments))
+	for i, c := range commitments {
+		participants[i] = c.SignerID
 	}
+	lambda := s.LambdaRegistry.GetOrNew(s.KeyShare.ID, participants) // Lagrange coefficient λi
 
-	commitmentID := commitment.CommitmentID
-	com := s.NonceCommitments[commitmentID]
+	z := new(btcec.ModNScalar).
+		Mul2(
+			ourNonces.BindingNonce,        // ei
+			bindingFactors[s.KeyShare.ID], // ρi
+		).
+		Add(ourNonces.HidingNonce). // di
+		Add(
+			new(btcec.ModNScalar).
+				Mul2(
+					lambda,          // λi
+					challengeScalar, // c
+				).
+				Mul(s.KeyShare.Secret), // si
+		)
 
-	// compute the signature share: h + b*f + l*s
-	bindingFactor := bindingFactors[s.KeyShare.ID]
-	sigShare := new(btcec.ModNScalar).Add2(
-		com.HidingNonce,
-		new(btcec.ModNScalar).Mul2(bindingFactor, com.BindingNonce),
-	).
-		Add(lambdaChall.Mul(s.KeyShare.Secret))
+	// 6. Each Pi securely deletes ((di , Di),(ei , Ei)) from their local storage
+	s.clearNonceCommitment(ourNonces.CommitmentID)
 
-	s.clearNonceCommitment(commitmentID)
-
+	// ...and then returns zi to SA.
 	return &PartialSignature{
 		SignerIdentifier: s.KeyShare.ID,
-		PartialSignature: sigShare,
+		PartialSignature: z,
 	}, nil
 }
