@@ -13,17 +13,17 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
-// AggregateSignatures enables a coordinator to produce the final signature given all signature shares.
+// AggregateSignatures enables a coordinator to produce the final signature given all signature shards.
 //
-// Before aggregation, each signature share must be a valid, deserialized element. If that validation fails the
+// Before aggregation, each signature shard must be a valid, deserialized element. If that validation fails the
 // coordinator must abort the protocol, as the resulting signature will be invalid.
 // The CommitmentList must be sorted in ascending order by identifier.
 //
 // The coordinator should verify this signature using the group public key before publishing or releasing the signature.
-// This aggregate signature will verify if and only if all signature shares are valid. If an invalid share is identified
+// This aggregate signature will verify if and only if all signature shards are valid. If an invalid shard is identified
 // a reasonable approach is to remove the signer from the set of allowed participants in future runs of FROST. If verify
-// is set to true, AggregateSignatures will automatically verify the signature shares, and will return an error on the
-// first encountered invalid signature share.
+// is set to true, AggregateSignatures will automatically verify the signature shards, and will return an error on the
+// first encountered invalid signature shard.
 func (c *Configuration) AggregateSignatures(
 	message []byte,
 	partialSigs []PartialSignature,
@@ -38,7 +38,7 @@ func (c *Configuration) AggregateSignatures(
 		return nil, err
 	}
 
-	signature, err := c.sumShares(partialSigs, groupCommitment)
+	signature, err := c.sumShards(partialSigs, groupCommitment)
 	if err != nil {
 		return nil, err
 	}
@@ -46,12 +46,12 @@ func (c *Configuration) AggregateSignatures(
 	return signature, nil
 }
 
-func (c *Configuration) sumShares(shares []PartialSignature, groupCommitment *btcec.JacobianPoint) (*schnorr.Signature, error) {
+func (c *Configuration) sumShards(shards []PartialSignature, groupCommitment *btcec.JacobianPoint) (*schnorr.Signature, error) {
 	z := new(btcec.ModNScalar)
 
-	for _, partialSig := range shares {
+	for _, partialSig := range shards {
 		if partialSig.PartialSignature == nil || partialSig.PartialSignature.IsZero() {
-			return nil, errors.New("invalid signature share (nil or zero scalar)")
+			return nil, errors.New("invalid signature shard (nil or zero scalar)")
 		}
 
 		z.Add(partialSig.PartialSignature)
@@ -60,7 +60,7 @@ func (c *Configuration) sumShares(shares []PartialSignature, groupCommitment *bt
 	return schnorr.NewSignature(&groupCommitment.X, z), nil
 }
 
-// VerifyPartialSignature verifies a signature share. partialSig is the signer's signature share to be verified.
+// VerifyPartialSignature verifies a signature shard. partialSig is the signer's signature shard to be verified.
 //
 // The CommitmentList must be sorted in ascending order by identifier.
 func (c *Configuration) VerifyPartialSignature(
@@ -107,14 +107,14 @@ func (c *Configuration) preparePartialSignatureVerification(message []byte, comm
 
 func (c *Configuration) validatePartialSignatureExtensive(partialSig PartialSignature) error {
 	if partialSig.PartialSignature == nil || partialSig.PartialSignature.IsZero() {
-		return errors.New("invalid signature share (nil or zero scalar)")
+		return errors.New("invalid signature shard (nil or zero scalar)")
 	}
 
 	if partialSig.SignerIdentifier == 0 || partialSig.SignerIdentifier > c.MaxSigners {
 		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
 	}
 
-	idx := slices.IndexFunc(c.SignerPublicKeyShares, func(pks PublicKeyShare) bool { return pks.ID == partialSig.SignerIdentifier })
+	idx := slices.IndexFunc(c.SignerPublicKeyShards, func(pks PublicKeyShard) bool { return pks.ID == partialSig.SignerIdentifier })
 	if idx == -1 {
 		return fmt.Errorf("no public key registered for signer %d", partialSig.SignerIdentifier)
 	}
@@ -140,8 +140,8 @@ func (c *Configuration) verifyPartialSignature(
 	}
 	commit := commitments[idx]
 
-	pkidx := slices.IndexFunc(c.SignerPublicKeyShares, func(pks PublicKeyShare) bool { return pks.ID == partialSig.SignerIdentifier })
-	pk := c.SignerPublicKeyShares[pkidx].PublicKey
+	pkidx := slices.IndexFunc(c.SignerPublicKeyShards, func(pks PublicKeyShard) bool { return pks.ID == partialSig.SignerIdentifier })
+	pk := c.SignerPublicKeyShards[pkidx].PublicKey
 
 	lambda := ComputeLambda(partialSig.SignerIdentifier, participants)
 	challenge := chainhash.TaggedHash(chainhash.TagBIP0340Challenge,
@@ -153,19 +153,19 @@ func (c *Configuration) verifyPartialSignature(
 	challengeScalar.SetBytes((*[32]byte)(challenge))
 	lambdaChall := new(btcec.ModNScalar).Mul2(lambda, challengeScalar)
 
-	// commitment KeyShare: r = g(h + b*f + l*s)
+	// commitment KeyShard: r = g(h + b*f + l*s)
 	bindingFactor := bindingFactors[partialSig.SignerIdentifier]
-	// commShare := commit.HidingNonceCommitment.Copy().Add(commit.BindingNonceCommitment.Copy().Multiply(bindingFactor))
+	// commShard := commit.HidingNonceCommitment.Copy().Add(commit.BindingNonceCommitment.Copy().Multiply(bindingFactor))
 
 	bncbf := new(btcec.JacobianPoint)
 	btcec.ScalarMultNonConst(bindingFactor, commit.BindingNonceCommitment, bncbf)
 
-	commShare := new(btcec.JacobianPoint)
-	btcec.AddNonConst(bncbf, commit.HidingNonceCommitment, commShare)
+	commShard := new(btcec.JacobianPoint)
+	btcec.AddNonConst(bncbf, commit.HidingNonceCommitment, commShard)
 
 	r := new(btcec.JacobianPoint)
 	btcec.ScalarMultNonConst(lambdaChall, pk, r)
-	btcec.AddNonConst(r, commShare, r)
+	btcec.AddNonConst(r, commShard, r)
 	r.ToAffine()
 
 	l := new(btcec.JacobianPoint)
@@ -173,7 +173,7 @@ func (c *Configuration) verifyPartialSignature(
 	l.ToAffine()
 
 	if !l.X.Equals(&r.X) || !l.Y.Equals(&r.Y) {
-		return fmt.Errorf("invalid signature share for signer %d", partialSig.SignerIdentifier)
+		return fmt.Errorf("invalid signature shard for signer %d", partialSig.SignerIdentifier)
 	}
 
 	return nil

@@ -9,7 +9,7 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
-type PublicKeyShare struct {
+type PublicKeyShard struct {
 	// The PublicKey of Secret belonging to the participant.
 	PublicKey *btcec.JacobianPoint
 
@@ -20,8 +20,8 @@ type PublicKeyShare struct {
 	ID int
 }
 
-func (c PublicKeyShare) Hex() string { return hex.EncodeToString(c.Encode()) }
-func (c *PublicKeyShare) DecodeHex(x string) error {
+func (c PublicKeyShard) Hex() string { return hex.EncodeToString(c.Encode()) }
+func (c *PublicKeyShard) DecodeHex(x string) error {
 	b, err := hex.DecodeString(x)
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func (c *PublicKeyShare) DecodeHex(x string) error {
 	return err
 }
 
-func (p PublicKeyShare) Encode() []byte {
+func (p PublicKeyShard) Encode() []byte {
 	out := make([]byte, 6+33+33*len(p.VssCommitment))
 
 	binary.LittleEndian.PutUint16(out[0:2], uint16(p.ID))
@@ -50,7 +50,7 @@ func (p PublicKeyShare) Encode() []byte {
 	return out
 }
 
-func (p *PublicKeyShare) Decode(in []byte) (int, error) {
+func (p *PublicKeyShard) Decode(in []byte) (int, error) {
 	if len(in) < 6+33 {
 		return 0, fmt.Errorf("too small")
 	}

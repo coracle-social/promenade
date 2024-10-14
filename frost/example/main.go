@@ -19,15 +19,15 @@ type ParticipantError struct {
 }
 
 func (pe ParticipantError) Error() string {
-	pks := pe.cfg.SignerPublicKeyShares[pe.index]
+	pks := pe.cfg.SignerPublicKeyShards[pe.index]
 	return fmt.Sprintf("participant %d (%x/%d) failed: %s", pe.index, btcec.NewPublicKey(&pks.PublicKey.X, &pks.PublicKey.Y).SerializeCompressed(), pks.ID, pe.reason)
 }
 
 func main() {
 	flow(
 		context.Background(),
-		2,
-		2,
+		4,
+		7,
 		"443db1f4d0e6761a4f43809cc04e21aed1e206317589c24032d366646e48c5fe",
 		"a79fc3461f156c087eee20d8a79624a55cb02690eb062e871b824306b8f51896",
 	)
@@ -49,33 +49,34 @@ func flow(
 
 	shards, pubkey, _ := frost.TrustedKeyDeal(secret, threshold, totalSigners)
 
-	pubkeyShares := make([]frost.PublicKeyShare, len(shards))
+	pubkeyShards := make([]frost.PublicKeyShard, len(shards))
 	for s, shard := range shards {
-		shareableHex := shard.PublicKeyShare.Hex()
+		shardableHex := shard.PublicKeyShard.Hex()
 
-		pubkeyShares[s] = frost.PublicKeyShare{}
-		if err := pubkeyShares[s].DecodeHex(shareableHex); err != nil {
+		pubkeyShards[s] = frost.PublicKeyShard{}
+		if err := pubkeyShards[s].DecodeHex(shardableHex); err != nil {
 			panic(err)
 		}
 	}
 	fmt.Println("pubkey:", hexPoint(pubkey)[2:])
+	fmt.Println("shards:", len(shards))
 
 	// start signing process
 	cfg := &frost.Configuration{
 		Threshold:             threshold,
 		MaxSigners:            totalSigners,
 		PublicKey:             pubkey,
-		SignerPublicKeyShares: pubkeyShares,
+		SignerPublicKeyShards: pubkeyShards,
 	}
 
 	if err := cfg.Init(); err != nil {
 		panic(err)
 	}
 
-	signers := make([]chan string, len(shards))
-	for s, shard := range shards {
+	signers := make([]chan string, threshold)
+	for s := range signers {
 		ch := make(chan string)
-		go signer(ch, shard)
+		go signer(ch, shards[s])
 		signers[s] = ch
 	}
 
@@ -183,7 +184,7 @@ func coordinator(
 	return signature.Serialize(), nil
 }
 
-func signer(ch chan string, shard frost.KeyShare) {
+func signer(ch chan string, shard frost.KeyShard) {
 	// step-1 (receive): initialize ourselves
 	cfg := frost.Configuration{}
 	if err := cfg.DecodeHex(<-ch); err != nil {
@@ -229,7 +230,7 @@ func signer(ch chan string, shard frost.KeyShare) {
 		}
 	}
 
-	// step-4 (send): sign and share our partial signature
+	// step-4 (send): sign and shard our partial signature
 	partialSig, err := signer.Sign(message, commitments)
 	if err != nil {
 		panic(err)

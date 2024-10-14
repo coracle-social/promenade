@@ -13,8 +13,8 @@ import (
 
 // Signer is a participant in a signing group.
 type Signer struct {
-	// The KeyShare holds the signer's secret and public info, such as keys and identifier.
-	KeyShare KeyShare
+	// The KeyShard holds the signer's secret and public info, such as keys and identifier.
+	KeyShard KeyShard
 
 	// LambdaRegistry records all interpolating values for the signers for different combinations of participant
 	// groups. Each group makes up a unique polynomial defined by the participants' identifiers. A value will be
@@ -29,8 +29,8 @@ type Signer struct {
 	Configuration *Configuration
 }
 
-// Nonce holds the signing nonces and their commitments. The Signer.Commit() method will generate and record a new nonce and return the Commitment to that nonce. That Commitment will be used in Signer.Sign() and the associated nonces to create a signature share. Note that nonces and their commitments are agnostic of the upcoming message to sign, and
-// can therefore be pre-computed and the commitments shared before the signing session, saving a round-trip.
+// Nonce holds the signing nonces and their commitments. The Signer.Commit() method will generate and record a new nonce and return the Commitment to that nonce. That Commitment will be used in Signer.Sign() and the associated nonces to create a signature shard. Note that nonces and their commitments are agnostic of the upcoming message to sign, and
+// can therefore be pre-computed and the commitments shardd before the signing session, saving a round-trip.
 type Nonce struct {
 	HidingNonce  *btcec.ModNScalar
 	BindingNonce *btcec.ModNScalar
@@ -52,7 +52,7 @@ func (s *Signer) clearNonceCommitment(commitmentID uint64) {
 }
 
 func (s *Signer) generateNonce(
-	secretShare *btcec.ModNScalar,
+	secretShard *btcec.ModNScalar,
 	pubkey *btcec.JacobianPoint,
 ) (secNonce *btcec.ModNScalar, pubNonce *btcec.JacobianPoint) {
 	var random [32]byte
@@ -60,7 +60,7 @@ func (s *Signer) generateNonce(
 		panic(fmt.Errorf("failed to read random: %w", err))
 	}
 
-	secBytes := secretShare.Bytes()
+	secBytes := secretShard.Bytes()
 
 	xoredRandom := chainhash.TaggedHash([]byte("FROST/aux"), random[:])
 	// xor
@@ -127,11 +127,11 @@ func (s *Signer) genNonceID() uint64 {
 // be kept secret, and the returned commitment sent to the signature aggregator.
 func (s *Signer) Commit() Commitment {
 	cid := s.genNonceID()
-	secHN, pubHN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
-	secBN, pubBN := s.generateNonce(s.KeyShare.Secret, s.Configuration.PublicKey)
+	secHN, pubHN := s.generateNonce(s.KeyShard.Secret, s.Configuration.PublicKey)
+	secBN, pubBN := s.generateNonce(s.KeyShard.Secret, s.Configuration.PublicKey)
 
 	com := Commitment{
-		SignerID:               s.KeyShare.ID,
+		SignerID:               s.KeyShard.ID,
 		CommitmentID:           cid,
 		HidingNonceCommitment:  pubHN,
 		BindingNonceCommitment: pubBN,
@@ -151,18 +151,18 @@ func (s *Signer) verifyNonces(com Commitment) error {
 		return fmt.Errorf(
 			"the commitment identifier %d for signer %d in the commitments is unknown to the signer",
 			com.CommitmentID,
-			s.KeyShare.ID,
+			s.KeyShard.ID,
 		)
 	}
 
 	if !nonces.HidingNonceCommitment.X.Equals(&com.HidingNonceCommitment.X) &&
 		!nonces.HidingNonceCommitment.Y.Equals(&com.HidingNonceCommitment.Y) {
-		return fmt.Errorf("invalid hiding nonce in commitment list for signer %d", s.KeyShare.ID)
+		return fmt.Errorf("invalid hiding nonce in commitment list for signer %d", s.KeyShard.ID)
 	}
 
 	if !nonces.BindingNonceCommitment.X.Equals(&com.BindingNonceCommitment.X) &&
 		!nonces.BindingNonceCommitment.Y.Equals(&com.BindingNonceCommitment.Y) {
-		return fmt.Errorf("invalid binding nonce in commitment list for signer %d", s.KeyShare.ID)
+		return fmt.Errorf("invalid binding nonce in commitment list for signer %d", s.KeyShard.ID)
 	}
 
 	return nil
@@ -177,9 +177,9 @@ func (s *Signer) VerifyCommitmentList(commitments []Commitment) error {
 	}
 
 	// The signer's id must be among the commitments.
-	cidx := slices.IndexFunc(commitments, func(c Commitment) bool { return s.KeyShare.ID == c.SignerID })
+	cidx := slices.IndexFunc(commitments, func(c Commitment) bool { return s.KeyShard.ID == c.SignerID })
 	if cidx == -1 {
-		return fmt.Errorf("signer identifier %d not found in the commitment list", s.KeyShare.ID)
+		return fmt.Errorf("signer identifier %d not found in the commitment list", s.KeyShard.ID)
 	}
 
 	// Check commitment values for the signer.
@@ -198,7 +198,7 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignatu
 	// (just get our nonces for using later)
 	var ourNonces Nonce
 	for _, commit := range commitments {
-		if commit.SignerID == s.KeyShare.ID {
+		if commit.SignerID == s.KeyShard.ID {
 			commitmentID := commit.CommitmentID
 			ourNonces = s.NonceCommitments[commitmentID]
 			break
@@ -232,18 +232,18 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignatu
 	challengeScalar := new(btcec.ModNScalar)
 	challengeScalar.SetBytes((*[32]byte)(challenge))
 
-	// 5. Each Pi computes their response using their long-lived secret share si by computing
+	// 5. Each Pi computes their response using their long-lived secret shard si by computing
 	// zi = di + (ei · ρi) + λi · si · c, using S to determine the i th Lagrange coefficient λi.
 	participants := make([]int, len(commitments))
 	for i, c := range commitments {
 		participants[i] = c.SignerID
 	}
-	lambda := s.LambdaRegistry.GetOrNew(s.KeyShare.ID, participants) // Lagrange coefficient λi
+	lambda := s.LambdaRegistry.GetOrNew(s.KeyShard.ID, participants) // Lagrange coefficient λi
 
 	z := new(btcec.ModNScalar).
 		Mul2(
 			ourNonces.BindingNonce,        // ei
-			bindingFactors[s.KeyShare.ID], // ρi
+			bindingFactors[s.KeyShard.ID], // ρi
 		).
 		Add(ourNonces.HidingNonce). // di
 		Add(
@@ -252,7 +252,7 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignatu
 					lambda,          // λi
 					challengeScalar, // c
 				).
-				Mul(s.KeyShare.Secret), // si
+				Mul(s.KeyShard.Secret), // si
 		)
 
 	// 6. Each Pi securely deletes ((di , Di),(ei , Ei)) from their local storage
@@ -260,7 +260,7 @@ func (s *Signer) Sign(message []byte, commitments []Commitment) (*PartialSignatu
 
 	// ...and then returns zi to SA.
 	return &PartialSignature{
-		SignerIdentifier: s.KeyShare.ID,
+		SignerIdentifier: s.KeyShard.ID,
 		PartialSignature: z,
 	}, nil
 }

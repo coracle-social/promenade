@@ -86,7 +86,7 @@ func (c *Configuration) ValidateCommitment(commitment Commitment) error {
 	}
 
 	// validate that the commitment comes from a registered signer.
-	if !slices.ContainsFunc(c.SignerPublicKeyShares, func(s PublicKeyShare) bool { return s.ID == commitment.SignerID }) {
+	if !slices.ContainsFunc(c.SignerPublicKeyShards, func(s PublicKeyShard) bool { return s.ID == commitment.SignerID }) {
 		return fmt.Errorf(
 			"signer identifier %d for commitment %d is not registered in the configuration",
 			commitment.SignerID,

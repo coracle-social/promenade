@@ -7,7 +7,7 @@ import (
 func TrustedKeyDeal(
 	secret *btcec.ModNScalar,
 	threshold, maxSigners int,
-) ([]KeyShare, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
+) ([]KeyShard, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
 	// negate this here before splitting the key if Y is odd because of bip-340
 	privateKey := btcec.PrivKeyFromScalar(secret)
 	pubkey := new(btcec.JacobianPoint)
@@ -17,7 +17,7 @@ func TrustedKeyDeal(
 	}
 	// ~
 
-	privateKeyShares, poly, err := shardReturnPolynomial(
+	privateKeyShards, poly, err := shardReturnPolynomial(
 		secret,
 		threshold,
 		maxSigners,
@@ -29,7 +29,7 @@ func TrustedKeyDeal(
 	commits := VSSCommit(poly)
 	pubkey = commits[0]
 
-	return privateKeyShares, pubkey, commits
+	return privateKeyShards, pubkey, commits
 }
 
-// TODO allow each receiver of a share to verify if they were handled a correct thing
+// TODO allow each receiver of a shard to verify if they were handled a correct thing

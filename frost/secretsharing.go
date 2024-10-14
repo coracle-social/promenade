@@ -15,9 +15,9 @@ type Polynomial []*btcec.ModNScalar
 func shardReturnPolynomial(
 	secret *btcec.ModNScalar,
 	threshold, maxParticipants int,
-) ([]KeyShare, Polynomial, error) {
+) ([]KeyShard, Polynomial, error) {
 	if maxParticipants < threshold {
-		return nil, nil, fmt.Errorf("wrong number of shares")
+		return nil, nil, fmt.Errorf("wrong number of shards")
 	}
 
 	p, err := makePolynomial(secret, threshold)
@@ -30,13 +30,13 @@ func shardReturnPolynomial(
 	pubkey.ToAffine()
 
 	// Evaluate the polynomial for each point x=1,...,n
-	secretKeyShares := make([]KeyShare, maxParticipants)
+	secretKeyShards := make([]KeyShard, maxParticipants)
 
 	for i := 0; i < maxParticipants; i++ {
-		secretKeyShares[i] = makeKeyShare(i+1, p, pubkey)
+		secretKeyShards[i] = makeKeyShard(i+1, p, pubkey)
 	}
 
-	return secretKeyShares, p, nil
+	return secretKeyShards, p, nil
 }
 
 func makePolynomial(secret *btcec.ModNScalar, threshold int) (Polynomial, error) {
@@ -74,7 +74,7 @@ func makePolynomialFromListFunc[S ~[]E, E any](s S, f func(E) *btcec.ModNScalar)
 	return polynomial
 }
 
-func makeKeyShare(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShare {
+func makeKeyShard(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShard {
 	ids := new(btcec.ModNScalar).SetInt(uint32(id))
 	yi := p.Evaluate(ids)
 
@@ -82,10 +82,10 @@ func makeKeyShare(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShare {
 	btcec.ScalarBaseMultNonConst(yi, pksh)
 	pksh.ToAffine()
 
-	return KeyShare{
+	return KeyShard{
 		Secret:    yi,
 		PublicKey: pubkey,
-		PublicKeyShare: PublicKeyShare{
+		PublicKeyShard: PublicKeyShard{
 			PublicKey:     pksh,
 			VssCommitment: nil,
 			ID:            id,
