@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"embed"
-	"encoding/json"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,7 +11,6 @@ import (
 	"github.com/fiatjaf/khatru"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/nip05"
 	"github.com/rs/cors"
 	"github.com/rs/zerolog"
 )
@@ -26,7 +23,7 @@ type Settings struct {
 	PrivateKey string `envconfig:"PRIVATE_KEY" required:"true"`
 	PublicKey  string
 
-	RegisteredSigners []string `envconfig:"REGISTERED_SIGNERS"`
+	InternalDatabasePath string `envconfig:"INTERNAL_DB_PATH" default:"internal"`
 }
 
 //go:embed static/*
@@ -36,10 +33,11 @@ var static embed.FS
 var index []byte
 
 var (
-	s     Settings
-	rw    nostr.RelayStore
-	log   = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
-	relay = khatru.NewRelay()
+	s        Settings
+	rw       nostr.RelayStore
+	log      = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	relay    = khatru.NewRelay()
+	internal *InternalDB
 )
 
 func main() {
@@ -53,44 +51,25 @@ func main() {
 		s.SchemeS = "s"
 	}
 
+	internal, err = NewInternalDB(s.InternalDatabasePath)
+
 	relay.Info.Name = "promenade relay"
-	relay.Info.Description = "a relay that acts as nip-46 provider for musig2-based keys"
+	relay.Info.Description = "a relay that acts as nip-46 provider for multisignature conglomerates"
 	relay.Info.PubKey = s.PublicKey
 
 	relay.RejectFilter = append(relay.RejectFilter,
 		veryPrivateFiltering,
-	)
-	relay.RejectEvent = append(relay.RejectEvent,
-		preliminaryElimination,
+		keepTrackOfWhoIsListening,
 	)
 	relay.OnEphemeralEvent = append(relay.OnEphemeralEvent,
+		handleCreate,
 		handleNIP46Request,
-		handlePartialPublicKey,
-		handlePartialSharedKey,
-		handleNonce,
-		handlePartialSig,
-	)
-	relay.OnConnect = append(relay.OnConnect,
-		func(ctx context.Context) {
-			khatru.RequestAuth(ctx)
-		},
+		handleSignerStuff,
 	)
 	mux := relay.Router()
 
 	// routes
 	mux.Handle("/static/", http.FileServer(http.FS(static)))
-	mux.HandleFunc("/.well-known/nostr.json", func(w http.ResponseWriter, r *http.Request) {
-		resp := nip05.WellKnownResponse{
-			Names: make(map[string]string),
-			NIP46: make(map[string][]string),
-		}
-		userContexts.Range(func(pubkey string, kuc *KeyUserContext) bool {
-			resp.Names[pubkey] = kuc.name
-			resp.NIP46[pubkey] = []string{"http" + s.SchemeS + "://" + s.Domain}
-			return true
-		})
-		json.NewEncoder(w).Encode(resp)
-	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("content-type", "text/html")
 		w.Write(index)

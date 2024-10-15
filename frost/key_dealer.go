@@ -31,5 +31,3 @@ func TrustedKeyDeal(
 
 	return privateKeyShards, pubkey, commits
 }
-
-// TODO allow each receiver of a shard to verify if they were handled a correct thing

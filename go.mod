@@ -3,7 +3,8 @@ module fiatjaf.com/promenade
 go 1.23.1
 
 require (
-	github.com/a-h/templ v0.2.543
+	fiatjaf.com/leafdb v0.0.6
+	github.com/a-h/templ v0.2.771
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0
@@ -11,15 +12,17 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mailru/easyjson v0.7.7
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/nbd-wtf/go-nostr v0.38.2
+	github.com/nbd-wtf/go-nostr v0.39.0
 	github.com/puzpuzpuz/xsync/v3 v3.4.0
-	github.com/rs/cors v1.10.1
+	github.com/rs/cors v1.11.0
 	github.com/rs/zerolog v1.32.0
 	github.com/urfave/cli/v3 v3.0.0-alpha7
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
-	github.com/andybalholm/brotli v1.0.5 // indirect
+	github.com/PowerDNS/lmdb-go v1.9.2 // indirect
+	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/fasthttp/websocket v1.5.7 // indirect
 	github.com/fiatjaf/eventstore v0.9.0 // indirect
@@ -40,6 +43,6 @@ require (
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
 	golang.org/x/crypto v0.28.0 // indirect
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0 // indirect
-	golang.org/x/net v0.21.0 // indirect
+	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
 )

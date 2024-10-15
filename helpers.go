@@ -1,34 +1,20 @@
 package main
 
-import "github.com/nbd-wtf/go-nostr"
+import (
+	"fmt"
 
-func getKeyUserSession(event *nostr.Event) *KeyUserContext {
-	p := event.Tags.GetFirst([]string{"p", ""})
-	targetPubkey := (*p)[1]
-	kuc, _ := userContexts.Load(targetPubkey)
-	return kuc
+	"fiatjaf.com/promenade/frost"
+	"github.com/btcsuite/btcd/btcec/v2"
+)
+
+type ParticipantError struct {
+	cfg *frost.Configuration
+
+	index  int
+	reason string
 }
 
-func nameWasUsed(name string) bool {
-	used := false
-	userContexts.Range(func(_ string, value *KeyUserContext) bool {
-		if value.name == name {
-			used = true
-			return false
-		}
-		return true
-	})
-	if used {
-		return used
-	}
-
-	pendingCreation.Range(func(_ string, value *PendingKeyUserContext) bool {
-		if value.name == name {
-			used = true
-			return false
-		}
-		return true
-	})
-
-	return used
+func (pe ParticipantError) Error() string {
+	pks := pe.cfg.SignerPublicKeyShards[pe.index]
+	return fmt.Sprintf("participant %d (%x/%d) failed: %s", pe.index, btcec.NewPublicKey(&pks.PublicKey.X, &pks.PublicKey.Y).SerializeCompressed(), pks.ID, pe.reason)
 }

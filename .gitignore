@@ -5,3 +5,4 @@ static/bundle.css
 node_modules
 events
 tmp
+internal

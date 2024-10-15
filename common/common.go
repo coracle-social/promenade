@@ -1,11 +1,10 @@
 package common
 
 const (
-	AccountCreationKind      = 24231
-	ConnectionKind           = 24232
-	PartialPubkeyKind        = 24233
-	PartialSharedKeyKind     = 24234
-	EventToPartiallySignKind = 24235
-	NonceKind                = 24236
-	PartialSigKind           = 24237
+	KindAccountRegistration = 24231
+
+	KindConfiguration    = 24232 // coordinator to signer
+	KindCommit           = 24233 // signer to coordinator
+	KindEventToBeSigned  = 24234 // coordinator to signer
+	KindPartialSignature = 24235 // signer to coordinator
 )
