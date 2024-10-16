@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	_ "github.com/a-h/templ"
+	"github.com/fiatjaf/eventstore"
+	"github.com/fiatjaf/eventstore/badger"
 	"github.com/fiatjaf/khatru"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/nbd-wtf/go-nostr"
@@ -23,7 +25,7 @@ type Settings struct {
 	PrivateKey string `envconfig:"SECRET_KEY" required:"true"`
 	PublicKey  string
 
-	InternalDatabasePath string `envconfig:"INTERNAL_DB_PATH" default:"/tmp/promenade-coordinator-db"`
+	EventstorePath string `envconfig:"DB_PATH" default:"/tmp/promenade-eventstore"`
 }
 
 //go:embed static/*
@@ -37,7 +39,7 @@ var (
 	rw       nostr.RelayStore
 	log      = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
 	relay    = khatru.NewRelay()
-	internal *InternalDB
+	eventsdb eventstore.RelayWrapper
 )
 
 func main() {
@@ -51,12 +53,24 @@ func main() {
 		s.SchemeS = "s"
 	}
 
-	internal, err = NewInternalDB(s.InternalDatabasePath)
+	db := &badger.BadgerBackend{Path: s.EventstorePath}
+	if err := db.Init(); err != nil {
+		log.Fatal().Err(err).Str("path", s.EventstorePath).Msg("failed to initialize events db")
+		return
+	}
+	eventsdb = eventstore.RelayWrapper{Store: db}
 
 	relay.Info.Name = "promenade relay"
 	relay.Info.Description = "a relay that acts as nip-46 provider for multisignature conglomerates"
 	relay.Info.PubKey = s.PublicKey
 
+	relay.StoreEvent = append(relay.StoreEvent, db.SaveEvent)
+	relay.QueryEvents = append(relay.QueryEvents, db.QueryEvents)
+	relay.DeleteEvent = append(relay.DeleteEvent, db.DeleteEvent)
+
+	relay.RejectEvent = append(relay.RejectEvent,
+		filterOutEverythingExceptWhatWeWant,
+	)
 	relay.RejectFilter = append(relay.RejectFilter,
 		veryPrivateFiltering,
 		keepTrackOfWhoIsListening,

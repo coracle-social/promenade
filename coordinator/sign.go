@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
-	"sync"
 
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
@@ -23,8 +22,7 @@ var (
 )
 
 type GroupContext struct {
-	group *Group
-	sync.Mutex
+	common.AccountRegistration
 }
 
 type Session struct {
@@ -33,31 +31,28 @@ type Session struct {
 }
 
 func (kuc *GroupContext) GetPublicKey(ctx context.Context) (string, error) {
-	return kuc.group.Pubkey, nil
+	return kuc.PubKey, nil
 }
 
 func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) error {
-	kuc.Lock()
-	defer kuc.Unlock()
-
-	ipk, _ := hex.DecodeString("02" + kuc.group.Pubkey)
+	ipk, _ := hex.DecodeString("02" + kuc.PubKey)
 	pubkey, _ := btcec.ParseJacobian(ipk)
 
 	// signers that are online and that we have chosen to participate in this round
-	chosenSigners := make([]string, 0, kuc.group.Threshold)
+	chosenSigners := make([]string, 0, kuc.Threshold)
 
 	cfg := &frost.Configuration{
-		Threshold:             int(kuc.group.Threshold),
-		MaxSigners:            len(kuc.group.Signers),
+		Threshold:             int(kuc.Threshold),
+		MaxSigners:            len(kuc.Signers),
 		PublicKey:             &pubkey,
-		SignerPublicKeyShards: make([]frost.PublicKeyShard, len(kuc.group.Signers)),
+		SignerPublicKeyShards: make([]frost.PublicKeyShard, len(kuc.Signers)),
 	}
-	for s, signer := range kuc.group.Signers {
-		cfg.SignerPublicKeyShards[s].Decode(signer.Pubshard)
+	for s, signer := range kuc.Signers {
+		cfg.SignerPublicKeyShards[s] = signer.Shard
 
 		if len(chosenSigners) < cfg.Threshold {
-			if _, isOnline := onlineSigners.Load(signer.Pubkey); isOnline {
-				chosenSigners = append(chosenSigners, signer.Pubkey)
+			if _, isOnline := onlineSigners.Load(signer.PeerPubKey); isOnline {
+				chosenSigners = append(chosenSigners, signer.PeerPubKey)
 			}
 		}
 	}

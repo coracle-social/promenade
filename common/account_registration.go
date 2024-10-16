@@ -12,6 +12,10 @@ type AccountRegistration struct {
 	// aggregated pubkey
 	PubKey string
 
+	// this is the keypair the coordinator will use to handle signing requests from clients
+	HandlerSecret string
+	HandlerPublic string
+
 	Threshold int
 	Signers   []Signer // len() == MaxSigners
 
@@ -30,20 +34,42 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 		return fmt.Errorf("wrong kind %d, expected %d", evt.Kind, KindAccountRegistration)
 	}
 
+	// the account creation must be signed by the same key that is being split it
 	a.PubKey = evt.PubKey
 
-	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag != nil {
-		var err error
-		a.Threshold, err = strconv.Atoi((*tag)[1])
-		if err != nil || a.Threshold < 0 || a.Threshold > 10 {
-			return fmt.Errorf("'threshold' ('%s') is not a valid number", (*tag)[1])
-		}
+	// the handler secret key is also created by the client and the coordinator is
+	//   merely informed about it
+	if tag := evt.Tags.GetFirst([]string{"handlersecret", ""}); tag == nil {
+		return fmt.Errorf("missing 'handlersecret' tag")
 	} else {
-		return fmt.Errorf("missing 'threshold' tag")
+		a.HandlerSecret = (*tag)[1]
+		handlerPubKey, err := nostr.GetPublicKey(a.HandlerSecret)
+		if err != nil {
+			return fmt.Errorf("'handlersecret' ('%s') is not a valid secret key", (*tag)[1])
+		}
+
+		if tag := evt.Tags.GetFirst([]string{"h", ""}); tag == nil {
+			return fmt.Errorf("missing 'h' tag")
+		} else if handlerPubKey != (*tag)[1] {
+			return fmt.Errorf("'h' tag pubkey doesn't match 'handlersecret'")
+		}
+
+		a.HandlerPublic = handlerPubKey
 	}
 
+	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag == nil {
+		return fmt.Errorf("missing 'threshold' tag")
+	} else {
+		var err error
+		a.Threshold, err = strconv.Atoi((*tag)[1])
+		if err != nil || a.Threshold <= 0 || a.Threshold > 20 {
+			return fmt.Errorf("'threshold' ('%s') is not a valid number", (*tag)[1])
+		}
+	}
+
+	// each signer is a different 'p' tag
 	a.Signers = make([]Signer, 0, a.Threshold*2)
-	for _, tag := range evt.Tags.All([]string{"signer"}) {
+	for _, tag := range evt.Tags.All([]string{"p"}) {
 		if len(tag) != 3 {
 			return fmt.Errorf("invalid signer tag length: 3 expected, got %d", len(tag))
 		}
@@ -69,10 +95,12 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 }
 
 func (a AccountRegistration) Encode() nostr.Event {
-	tags := make(nostr.Tags, 1, 1+len(a.Signers))
+	tags := make(nostr.Tags, 3, 3+len(a.Signers))
 	tags[0] = nostr.Tag{"threshold", strconv.Itoa(a.Threshold)}
+	tags[1] = nostr.Tag{"handlersecret", a.HandlerSecret}
+	tags[2] = nostr.Tag{"h", a.HandlerPublic}
 	for _, signer := range a.Signers {
-		tags = append(tags, nostr.Tag{"signer", signer.PeerPubKey, signer.Shard.Hex()})
+		tags = append(tags, nostr.Tag{"p", signer.PeerPubKey, signer.Shard.Hex()})
 	}
 
 	return nostr.Event{

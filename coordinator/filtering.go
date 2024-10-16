@@ -33,7 +33,11 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 		return true, "filter is missing required kinds"
 	}
 
-	if !internal.checkSignerExistence(requester) {
+	res, err := eventsdb.QuerySync(ctx, nostr.Filter{Tags: nostr.TagMap{"p": []string{requester}}})
+	if err != nil {
+		return true, "error: failed to query"
+	}
+	if len(res) == 0 {
 		return true, "restricted: you are not a signer"
 	}
 

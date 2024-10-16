@@ -57,9 +57,11 @@ var shardkey = &cli.Command{
 		}
 
 		ar := common.AccountRegistration{
-			Threshold: threshold,
-			Signers:   make([]common.Signer, len(signerPubkeys)),
+			Threshold:     threshold,
+			Signers:       make([]common.Signer, len(signerPubkeys)),
+			HandlerSecret: nostr.GeneratePrivateKey(),
 		}
+		ar.HandlerPublic, _ = nostr.GetPublicKey(ar.HandlerSecret)
 
 		for s, signer := range signerPubkeys {
 			if !nostr.IsValidPublicKey(signer) {

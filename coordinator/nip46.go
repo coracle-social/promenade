@@ -2,28 +2,47 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"fiatjaf.com/promenade/common"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip46"
 )
 
 var nip46Signer = nip46.NewDynamicSigner(
 	func(handlerPubkey string) (string, error) {
-		group, err := internal.getGroupByHandlerPubkey(handlerPubkey)
+		res, err := eventsdb.QuerySync(context.TODO(), nostr.Filter{
+			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
+		})
 		if err != nil {
 			return "", err
 		}
-		return group.Handler, nil
+		if len(res) != 1 {
+			return "", fmt.Errorf("invalid result from 'h' query")
+		}
+
+		handlerSecret := res[0].Tags.GetFirst([]string{"h"})
+		return (*handlerSecret)[1], nil
 	},
 	func(handlerPubkey string) (nostr.Keyer, error) {
-		group, err := internal.getGroupByHandlerPubkey(handlerPubkey)
+		res, err := eventsdb.QuerySync(context.TODO(), nostr.Filter{
+			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
+		})
 		if err != nil {
+			return nil, err
+		}
+		if len(res) != 1 {
+			return nil, fmt.Errorf("invalid result from 'h' query")
+		}
+
+		ar := common.AccountRegistration{}
+		if err := ar.Decode(res[0]); err != nil {
 			return nil, err
 		}
 
 		kuc, _ := groupContextsByHandlerPubKey.LoadOrCompute(handlerPubkey, func() *GroupContext {
-			return &GroupContext{group: group}
+			return &GroupContext{ar}
 		})
 		return kuc, nil
 	},
