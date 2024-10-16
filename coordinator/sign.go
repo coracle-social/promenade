@@ -25,7 +25,7 @@ var (
 type GroupContext struct {
 	group *Group
 
-	callback chan *nostr.Event
+	ch chan *nostr.Event
 
 	sync.Mutex
 }
@@ -67,7 +67,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	}
 
 	// this is where we'll get responses that might be interesting
-	kuc.callback = make(chan *nostr.Event)
+	kuc.ch = make(chan *nostr.Event)
 
 	// step-1 (send): initialize each participant.
 	//
@@ -90,7 +90,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving commit")
-		case evt := <-kuc.callback:
+		case evt := <-kuc.ch:
 			if evt.Kind != common.KindCommit {
 				return fmt.Errorf("got a kind %d instead of %d (commit) from %s",
 					evt.Kind, common.KindCommit, evt.PubKey)
@@ -144,7 +144,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving partial signature")
-		case evt := <-kuc.callback:
+		case evt := <-kuc.ch:
 			if evt.Kind != common.KindPartialSignature {
 				return fmt.Errorf("got a kind %d instead of %d (partial sig) from %s",
 					evt.Kind, common.KindPartialSignature, evt.PubKey)
@@ -206,7 +206,7 @@ func handleSignerStuff(ctx context.Context, evt *nostr.Event) {
 
 	if kuc, ok := groupContextsByAggregatedPubKey.Load((*pTag)[1]); ok {
 		if slices.ContainsFunc(kuc.group.Signers, func(es *EncodedSigner) bool { return es.Pubkey == evt.PubKey }) {
-			kuc.callback <- evt
+			kuc.ch <- evt
 		}
 	}
 }
