@@ -97,14 +97,14 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 			if err := easyjson.Unmarshal([]byte(evt.Content), &evtToSign); err != nil {
 				return fmt.Errorf("failed to decode event to be signed: %w", err)
 			}
-			if !evt.CheckID() {
+			if !evtToSign.CheckID() {
 				return fmt.Errorf("event to be signed has a broken id")
 			}
-			msg, _ = hex.DecodeString(evt.ID)
+			msg, _ = hex.DecodeString(evtToSign.ID)
 		case common.KindCommit:
 			commit := frost.Commitment{}
 			if err := commit.DecodeHex(evt.Content); err != nil {
-				panic(err)
+				return fmt.Errorf("failed to decode received commitment: %w", err)
 			}
 
 			if commit.CommitmentID != ourCommitment.CommitmentID {

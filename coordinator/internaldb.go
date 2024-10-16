@@ -91,7 +91,6 @@ type InternalDB struct {
 }
 
 func (internal InternalDB) saveGroup(g *Group) error {
-	fmt.Println("saving", len(g.Signers))
 	_, err := internal.DB.Create(TypeGroup, g)
 	return err
 }

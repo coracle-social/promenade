@@ -1,5 +1,10 @@
+export PATH := "./node_modules/.bin:" + env_var('PATH')
+
 dev:
     fd 'go|html|md|templ|base.css' | entr -r bash -c 'just build && godotenv ./promenade'
+
+protobuf:
+    protoc --proto_path=. --go_out=. --go_opt=paths=source_relative internal.proto
 
 tailwind:
     tailwindcss -i ./base.css -o ./static/bundle.css

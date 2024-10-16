@@ -95,7 +95,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	})
 
 	// step-2 (receive): get all pre-commit nonces from signers
-	commitments := make([]frost.Commitment, cfg.Threshold)
+	commitments := make([]frost.Commitment, len(chosenSigners))
 	for s := range chosenSigners {
 		select {
 		case <-ctx.Done():
@@ -180,7 +180,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	if ok := sig.Verify(msg[:], btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
 		for s, partialSig := range partialSigs {
 			if err := cfg.VerifyPartialSignature(partialSig, msg[:], commitments); err != nil {
-				return ParticipantError{cfg, s, "invalid partial signature: " + err.Error()}
+				return fmt.Errorf("signer %s failed: %w", chosenSigners[s], err)
 			}
 		}
 		return fmt.Errorf("signature %x is bad for unknown reasons", sig.Serialize())
