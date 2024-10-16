@@ -32,7 +32,7 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 
 	a.PubKey = evt.PubKey
 
-	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag != nil && nostr.IsValidPublicKey((*tag)[1]) {
+	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag != nil {
 		var err error
 		a.Threshold, err = strconv.Atoi((*tag)[1])
 		if err != nil || a.Threshold < 0 || a.Threshold > 10 {
@@ -42,7 +42,7 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 		return fmt.Errorf("missing 'threshold' tag")
 	}
 
-	signers := make([]Signer, 0, a.Threshold*2)
+	a.Signers = make([]Signer, 0, a.Threshold*2)
 	for _, tag := range evt.Tags.All([]string{"signer"}) {
 		if len(tag) != 3 {
 			return fmt.Errorf("invalid signer tag length: 3 expected, got %d", len(tag))
@@ -58,10 +58,10 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 			return fmt.Errorf("invalid encoded shard '%s': %w", tag[2], err)
 		}
 
-		signers = append(signers, signer)
+		a.Signers = append(a.Signers, signer)
 	}
 
-	if len(signers) < a.Threshold {
+	if len(a.Signers) < a.Threshold {
 		return fmt.Errorf("missing signers")
 	}
 
@@ -69,8 +69,8 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 }
 
 func (a AccountRegistration) Encode() nostr.Event {
-	tags := make(nostr.Tags, 2, 2+len(a.Signers))
-	tags[1] = nostr.Tag{"threshold", strconv.Itoa(a.Threshold)}
+	tags := make(nostr.Tags, 1, 1+len(a.Signers))
+	tags[0] = nostr.Tag{"threshold", strconv.Itoa(a.Threshold)}
 	for _, signer := range a.Signers {
 		tags = append(tags, nostr.Tag{"signer", signer.PeerPubKey, signer.Shard.Hex()})
 	}

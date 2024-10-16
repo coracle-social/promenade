@@ -1,10 +1,10 @@
 package common
 
 const (
-	KindAccountRegistration = 24231
+	KindAccountRegistration = 26430
 
-	KindConfiguration    = 24232 // coordinator to signer
-	KindCommit           = 24233 // signer to coordinator
-	KindEventToBeSigned  = 24234 // coordinator to signer
-	KindPartialSignature = 24235 // signer to coordinator
+	KindConfiguration    = 26432 // coordinator to signer
+	KindCommit           = 26433 // signer to coordinator
+	KindEventToBeSigned  = 26434 // coordinator to signer
+	KindPartialSignature = 26435 // signer to coordinator
 )

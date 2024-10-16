@@ -70,7 +70,7 @@ func (c *Configuration) ValidatePublicKeyShard(pks PublicKeyShard) error {
 
 func (c *Configuration) ValidateKeyShard(keyshard KeyShard) error {
 	if !c.initialized {
-		return fmt.Errorf("Configuration must be initialized")
+		return fmt.Errorf("configuration must be initialized")
 	}
 
 	if err := c.ValidatePublicKeyShard(keyshard.PublicKeyShard); err != nil {

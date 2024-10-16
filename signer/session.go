@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"slices"
+	"time"
 
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
@@ -12,14 +15,44 @@ import (
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
-var sessions = xsync.NewMapOf[[32]byte, chan *nostr.Event]()
+// signing sessions are indexed by the id of the first event that triggered them
+var sessions = xsync.NewMapOf[string, chan *nostr.Event]()
 
-func startSession(ch chan *nostr.Event) error {
+func handleInSession(evt *nostr.Event) {
+	eTag := evt.Tags.GetFirst([]string{"e", ""})
+	if eTag == nil {
+		return
+	}
+
+	if ch, ok := sessions.Load((*eTag)[1]); ok {
+		ch <- evt
+	}
+}
+
+func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event) error {
+	sendToCoordinator := func(evt *nostr.Event) {
+		if err := evt.Sign(data.SecretKey); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+		if err := relay.Publish(ctx, *evt); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
+			cancel()
+			return
+		}
+		cancel()
+	}
+
 	// step-1 (receive): initialize ourselves
 	evt := <-ch
 	cfg := frost.Configuration{}
 	if err := cfg.DecodeHex(evt.Content); err != nil {
 		return fmt.Errorf("error decoding config: %w\n", err)
+	}
+	if err := cfg.Init(); err != nil {
+		return fmt.Errorf("error initializing config: %w", err)
 	}
 
 	idx := slices.IndexFunc(data.KeyGroups, func(kg KeyGroup) bool {
@@ -29,7 +62,8 @@ func startSession(ch chan *nostr.Event) error {
 		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
 	}
 
-	sessions.Store(*cfg.PublicKey.X.Bytes(), ch)
+	sessionId := evt.ID
+	sessions.Store(sessionId, ch)
 
 	shard := frost.KeyShard{}
 	if err := shard.DecodeHex(data.KeyGroups[idx].EncodedSecretKeyShard); err != nil {
@@ -45,12 +79,12 @@ func startSession(ch chan *nostr.Event) error {
 	ourCommitment := signer.Commit()
 	commitments := make([]frost.Commitment, 0, cfg.Threshold)
 	commitments = append(commitments, ourCommitment)
-	ch <- &nostr.Event{
+	sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindCommit,
 		Content:   ourCommitment.Hex(),
-		Tags:      nostr.Tags{{"p", cfg.PublicKey.X.String()}},
-	}
+		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
+	})
 
 	// step-3 (receive): get commits from other signers and the message to be signed
 	var msg []byte
@@ -88,12 +122,12 @@ func startSession(ch chan *nostr.Event) error {
 	if err != nil {
 		panic(err)
 	}
-	ch <- &nostr.Event{
+	sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindPartialSignature,
 		Content:   partialSig.Hex(),
-		Tags:      nostr.Tags{{"p", cfg.PublicKey.X.String()}},
-	}
+		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
+	})
 
 	return nil
 }

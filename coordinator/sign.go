@@ -17,17 +17,19 @@ import (
 )
 
 var (
-	onlineSigners                   = xsync.NewMapOf[string, int]()
-	groupContextsByHandlerPubKey    = xsync.NewMapOf[string, *GroupContext]()
-	groupContextsByAggregatedPubKey = xsync.NewMapOf[string, *GroupContext]()
+	onlineSigners                = xsync.NewMapOf[string, int]()
+	groupContextsByHandlerPubKey = xsync.NewMapOf[string, *GroupContext]()
+	signingSessions              = xsync.NewMapOf[string, Session]()
 )
 
 type GroupContext struct {
 	group *Group
-
-	ch chan *nostr.Event
-
 	sync.Mutex
+}
+
+type Session struct {
+	chosenSigners []string
+	ch            chan *nostr.Event
 }
 
 func (kuc *GroupContext) GetPublicKey(ctx context.Context) (string, error) {
@@ -53,21 +55,21 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	for s, signer := range kuc.group.Signers {
 		cfg.SignerPublicKeyShards[s].Decode(signer.Pubshard)
 
-		if _, isOnline := onlineSigners.Load(signer.Pubkey); isOnline {
-			chosenSigners = append(chosenSigners, signer.Pubkey)
-			if len(chosenSigners) == cfg.Threshold {
-				break
+		if len(chosenSigners) < cfg.Threshold {
+			if _, isOnline := onlineSigners.Load(signer.Pubkey); isOnline {
+				chosenSigners = append(chosenSigners, signer.Pubkey)
 			}
 		}
 	}
 
 	// fail if we don't have enough online signers
 	if len(chosenSigners) < cfg.Threshold {
-		return fmt.Errorf("not enough signers online: just %d, needed %d", len(chosenSigners), cfg.Threshold)
+		return fmt.Errorf("not enough signers online: have %d, needed %d", len(chosenSigners), cfg.Threshold)
 	}
 
-	// this is where we'll get responses that might be interesting
-	kuc.ch = make(chan *nostr.Event)
+	if err := cfg.Init(); err != nil {
+		return fmt.Errorf("fail to initialize config: %w", err)
+	}
 
 	// step-1 (send): initialize each participant.
 	//
@@ -84,13 +86,21 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	confEvt.Sign(s.PrivateKey)
 	relay.BroadcastEvent(confEvt)
 
+	// each signing session is identified by this initial event's id
+	sessionId := confEvt.ID
+	ch := make(chan *nostr.Event)
+	signingSessions.Store(sessionId, Session{
+		ch:            ch,
+		chosenSigners: chosenSigners,
+	})
+
 	// step-2 (receive): get all pre-commit nonces from signers
 	commitments := make([]frost.Commitment, cfg.Threshold)
 	for s := range chosenSigners {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving commit")
-		case evt := <-kuc.ch:
+		case evt := <-ch:
 			if evt.Kind != common.KindCommit {
 				return fmt.Errorf("got a kind %d instead of %d (commit) from %s",
 					evt.Kind, common.KindCommit, evt.PubKey)
@@ -110,11 +120,12 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			CreatedAt: nostr.Now(),
 			Kind:      common.KindCommit,
 			Content:   commit.Hex(),
-			Tags:      make(nostr.Tags, len(chosenSigners)),
+			Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 		}
 
+		commitEvt.Tags[0] = nostr.Tag{"e", sessionId}
 		for s, signer := range chosenSigners {
-			commitEvt.Tags[s] = nostr.Tag{"p", signer}
+			commitEvt.Tags[1+s] = nostr.Tag{"p", signer}
 		}
 
 		commitEvt.Sign(s.PrivateKey)
@@ -130,10 +141,11 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindEventToBeSigned,
 		Content:   string(jevt),
-		Tags:      make(nostr.Tags, len(chosenSigners)),
+		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 	}
+	evtEvt.Tags[0] = nostr.Tag{"e", sessionId}
 	for s, signer := range chosenSigners {
-		evtEvt.Tags[s] = nostr.Tag{"p", signer}
+		evtEvt.Tags[1+s] = nostr.Tag{"p", signer}
 	}
 	evtEvt.Sign(s.PrivateKey)
 	relay.BroadcastEvent(evtEvt)
@@ -144,7 +156,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving partial signature")
-		case evt := <-kuc.ch:
+		case evt := <-ch:
 			if evt.Kind != common.KindPartialSignature {
 				return fmt.Errorf("got a kind %d instead of %d (partial sig) from %s",
 					evt.Kind, common.KindPartialSignature, evt.PubKey)
@@ -199,14 +211,16 @@ func handleSignerStuff(ctx context.Context, evt *nostr.Event) {
 		return
 	}
 
-	pTag := evt.Tags.GetFirst([]string{"p", ""})
-	if pTag == nil {
+	eTag := evt.Tags.GetFirst([]string{"e", ""})
+	if eTag == nil {
 		return
 	}
 
-	if kuc, ok := groupContextsByAggregatedPubKey.Load((*pTag)[1]); ok {
-		if slices.ContainsFunc(kuc.group.Signers, func(es *EncodedSigner) bool { return es.Pubkey == evt.PubKey }) {
-			kuc.ch <- evt
+	sessionId := (*eTag)[1]
+
+	if session, ok := signingSessions.Load(sessionId); ok {
+		if slices.Contains(session.chosenSigners, evt.PubKey) {
+			session.ch <- evt
 		}
 	}
 }

@@ -22,9 +22,9 @@ var nip46Signer = nip46.NewDynamicSigner(
 			return nil, err
 		}
 
-		kuc := &GroupContext{group: group}
-		kuc, _ = groupContextsByHandlerPubKey.LoadOrStore(handlerPubkey, kuc)
-		groupContextsByAggregatedPubKey.Store(group.Pubkey, kuc)
+		kuc, _ := groupContextsByHandlerPubKey.LoadOrCompute(handlerPubkey, func() *GroupContext {
+			return &GroupContext{group: group}
+		})
 		return kuc, nil
 	},
 	nil,

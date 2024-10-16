@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"time"
 
 	"fiatjaf.com/promenade/common"
 	"github.com/nbd-wtf/go-nostr"
@@ -39,8 +38,8 @@ var run = &cli.Command{
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error on nip11 request to %s on group %d: %s\n", kg.Coordinator, i, err)
 					continue
-				} else if nostr.IsValidPublicKey(info.PubKey) {
-					fmt.Fprintf(os.Stderr, "coordinator %s has no pubkey on group %d\n", kg.Coordinator, i)
+				} else if !nostr.IsValidPublicKey(info.PubKey) {
+					fmt.Fprintf(os.Stderr, "coordinator %s has invalid pubkey %s on group %d\n", kg.Coordinator, info.PubKey, i)
 					continue
 				}
 				filter.Authors = []string{info.PubKey}
@@ -60,32 +59,15 @@ var run = &cli.Command{
 				ch := make(chan *nostr.Event)
 
 				go func() {
-					err := startSession(ch)
+					err := startSession(ctx, ie.Relay, ch)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "", err)
-					}
-				}()
-
-				go func() {
-					for evt := range ch {
-						if err := evt.Sign(data.SecretKey); err != nil {
-							fmt.Fprintf(os.Stderr, "failed to sign %d event to %s: %w", evt.Kind, ie.Relay.URL, err)
-							return
-						}
-
-						ctx, cancel := context.WithTimeout(ctx, time.Second*10)
-						if err := ie.Relay.Publish(ctx, *evt); err != nil {
-							fmt.Fprintf(os.Stderr, "failed to publish %d event to %s: %w", evt.Kind, ie.Relay.URL, err)
-							cancel()
-							return
-						}
-						cancel()
+						fmt.Fprintf(os.Stderr, "failed to start session: %s", err)
 					}
 				}()
 
 				ch <- evt
-			case common.KindCommit:
-			case common.KindEventToBeSigned:
+			case common.KindCommit, common.KindEventToBeSigned:
+				handleInSession(evt)
 			}
 		}
 

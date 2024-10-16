@@ -27,13 +27,14 @@ var app = &cli.Command{
 	Name: "promd",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:    "dir",
-			Aliases: []string{"d"},
-			Usage:   "path to the directory that stores things",
+			Name:        "dir",
+			Aliases:     []string{"d"},
+			Usage:       "path to the directory that stores things",
+			Destination: &dir,
 		},
 	},
 	Before: func(ctx context.Context, c *cli.Command) error {
-		data, err := readData(c.String("dir"))
+		data, err := readData(dir)
 		if err != nil {
 			return err
 		}

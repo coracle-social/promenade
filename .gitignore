@@ -5,4 +5,4 @@ static/bundle.css
 node_modules
 events
 tmp
-internal
+data.json

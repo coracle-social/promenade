@@ -49,7 +49,7 @@ func keepTrackOfWhoIsListening(ctx context.Context, filter nostr.Filter) (reject
 	})
 
 	go func() {
-		<-conn.Request.Context().Done()
+		<-conn.Context.Done()
 		onlineSigners.Compute(signer, func(oldValue int, loaded bool) (newValue int, delete bool) {
 			return oldValue - 1, oldValue == 1
 		})

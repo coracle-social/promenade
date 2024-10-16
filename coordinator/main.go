@@ -20,10 +20,10 @@ type Settings struct {
 	Domain  string `envconfig:"DOMAIN" default:"localhost"`
 	SchemeS string
 
-	PrivateKey string `envconfig:"PRIVATE_KEY" required:"true"`
+	PrivateKey string `envconfig:"SECRET_KEY" required:"true"`
 	PublicKey  string
 
-	InternalDatabasePath string `envconfig:"INTERNAL_DB_PATH" default:"internal"`
+	InternalDatabasePath string `envconfig:"INTERNAL_DB_PATH" default:"/tmp/promenade-coordinator-db"`
 }
 
 //go:embed static/*
