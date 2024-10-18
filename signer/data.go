@@ -22,6 +22,21 @@ type KeyGroup struct {
 	EncodedSecretKeyShard string `json:"encoded_secret_key_shard"`
 }
 
+func lockDir() error {
+	name := filepath.Join(dir, "lock")
+	if _, err := os.Stat(name); os.IsNotExist(err) {
+		_, err := os.Create(name)
+		return err
+	} else {
+		return fmt.Errorf("lock file exists")
+	}
+}
+
+func unlockDir() {
+	name := filepath.Join(dir, "lock")
+	os.Remove(name)
+}
+
 func storeData(data Data) error {
 	jdata, _ := json.MarshalIndent(data, "", "  ")
 

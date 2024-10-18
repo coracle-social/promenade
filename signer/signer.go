@@ -12,20 +12,72 @@ import (
 	"fiatjaf.com/promenade/frost"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip11"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 // signing sessions are indexed by the id of the first event that triggered them
 var sessions = xsync.NewMapOf[string, chan *nostr.Event]()
 
-func handleInSession(evt *nostr.Event) {
-	eTag := evt.Tags.GetFirst([]string{"e", ""})
-	if eTag == nil {
-		return
+func runSigner(ctx context.Context) {
+	ourPubkey, _ := nostr.GetPublicKey(data.SecretKey)
+
+	filter := nostr.Filter{
+		Kinds: []int{common.KindCommit, common.KindConfiguration, common.KindEventToBeSigned},
+		Tags: nostr.TagMap{
+			"p": []string{ourPubkey},
+		},
 	}
 
-	if ch, ok := sessions.Load((*eTag)[1]); ok {
-		ch <- evt
+	dfs := make([]nostr.DirectedFilters, 0, 2)
+	for i, kg := range data.KeyGroups {
+		idx := slices.IndexFunc(dfs, func(df nostr.DirectedFilters) bool {
+			return df.Relay == nostr.NormalizeURL(kg.Coordinator)
+		})
+		if idx == -1 {
+			info, err := nip11.Fetch(ctx, kg.Coordinator)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error on nip11 request to %s on group %d: %s\n", kg.Coordinator, i, err)
+				continue
+			} else if !nostr.IsValidPublicKey(info.PubKey) {
+				fmt.Fprintf(os.Stderr, "coordinator %s has invalid pubkey %s on group %d\n", kg.Coordinator, info.PubKey, i)
+				continue
+			}
+			filter.Authors = []string{info.PubKey}
+			dfs = append(dfs, nostr.DirectedFilters{
+				Relay:   nostr.NormalizeURL(kg.Coordinator),
+				Filters: nostr.Filters{filter},
+			})
+		}
+	}
+
+	mainEventStream := pool.BatchedSubMany(ctx, dfs)
+
+	fmt.Fprintf(os.Stderr, "[signer] started waiting for sign requests from %d key groups\n", len(data.KeyGroups))
+	for ie := range mainEventStream {
+		evt := ie.Event
+		switch evt.Kind {
+		case common.KindConfiguration:
+			ch := make(chan *nostr.Event)
+
+			go func() {
+				err := startSession(ctx, ie.Relay, ch)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "failed to start session: %s", err)
+				}
+			}()
+
+			ch <- evt
+		case common.KindCommit, common.KindEventToBeSigned:
+			eTag := evt.Tags.GetFirst([]string{"e", ""})
+			if eTag == nil {
+				return
+			}
+
+			if ch, ok := sessions.Load((*eTag)[1]); ok {
+				ch <- evt
+			}
+		}
 	}
 }
 
@@ -61,6 +113,8 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	if idx == -1 {
 		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
 	}
+
+	fmt.Fprintf(os.Stderr, "[signer] sign session started for %x\n", cfg.PublicKey.X.Bytes())
 
 	sessionId := evt.ID
 	sessions.Store(sessionId, ch)
@@ -122,12 +176,14 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	if err != nil {
 		panic(err)
 	}
+
 	sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindPartialSignature,
 		Content:   partialSig.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
 	})
+	fmt.Fprintf(os.Stderr, "[signer] signed %x for %x\n", msg, *cfg.PublicKey.X.Bytes())
 
 	return nil
 }

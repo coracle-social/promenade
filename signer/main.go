@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/urfave/cli/v3"
@@ -24,7 +26,7 @@ func main() {
 }
 
 var app = &cli.Command{
-	Name: "promd",
+	Name: "signer",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:        "dir",
@@ -32,15 +34,35 @@ var app = &cli.Command{
 			Usage:       "path to the directory that stores things",
 			Destination: &dir,
 		},
+		&cli.StringFlag{
+			Name:  "accept-relay",
+			Usage: "specify a relay URL to use to receive key shards from users that may want to use you as a signer",
+		},
+		&cli.UintFlag{
+			Name:  "accept-max",
+			Usage: "just to prevent spam, limit the number of accepted groups to this -- upon restart we will accept up to this number again",
+			Value: 30,
+		},
 	},
-	Before: func(ctx context.Context, c *cli.Command) error {
+	Action: func(ctx context.Context, c *cli.Command) error {
+		if err := lockDir(); err != nil {
+			return fmt.Errorf("can't run two instances of signer at the same directory '%s': %w", dir, err)
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		go func() {
+			<-ctx.Done()
+			unlockDir()
+		}()
+
 		data, err := readData(dir)
 		if err != nil {
 			return err
 		}
 
 		publicKey, _ := nostr.GetPublicKey(data.SecretKey)
-		fmt.Fprintf(os.Stderr, "running as %s\n", publicKey)
+		fmt.Fprintf(os.Stderr, "[] running as %s\n", publicKey)
 
 		pool = nostr.NewSimplePool(context.Background(),
 			nostr.WithAuthHandler(
@@ -50,10 +72,22 @@ var app = &cli.Command{
 			),
 		)
 
+		signerCtx, cancelSigner := context.WithCancel(ctx)
+		go runSigner(signerCtx)
+
+		restartSigner := func() {
+			fmt.Fprintf(os.Stderr, "[signer] restarting signer...\n")
+			cancelSigner()
+			signerCtx, cancelSigner = context.WithCancel(ctx)
+			go runSigner(signerCtx)
+		}
+
+		if relay := c.String("accept-relay"); relay != "" {
+			go runAcceptor(ctx, relay, c.Uint("accept-max"), restartSigner)
+		}
+
+		<-ctx.Done()
+
 		return nil
 	},
-	Commands: []*cli.Command{
-		run,
-	},
-	DefaultCommand: "run",
 }

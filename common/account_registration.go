@@ -14,7 +14,6 @@ type AccountRegistration struct {
 
 	// this is the keypair the coordinator will use to handle signing requests from clients
 	HandlerSecret string
-	HandlerPublic string
 
 	Threshold int
 	Signers   []Signer // len() == MaxSigners
@@ -27,6 +26,11 @@ type Signer struct {
 	PeerPubKey string
 
 	Shard frost.PublicKeyShard
+}
+
+func (a AccountRegistration) HandlerPubKey() string {
+	pk, _ := nostr.GetPublicKey(a.HandlerSecret)
+	return pk
 }
 
 func (a *AccountRegistration) Decode(evt *nostr.Event) error {
@@ -53,8 +57,6 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 		} else if handlerPubKey != (*tag)[1] {
 			return fmt.Errorf("'h' tag pubkey doesn't match 'handlersecret'")
 		}
-
-		a.HandlerPublic = handlerPubKey
 	}
 
 	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag == nil {
@@ -98,7 +100,7 @@ func (a AccountRegistration) Encode() nostr.Event {
 	tags := make(nostr.Tags, 3, 3+len(a.Signers))
 	tags[0] = nostr.Tag{"threshold", strconv.Itoa(a.Threshold)}
 	tags[1] = nostr.Tag{"handlersecret", a.HandlerSecret}
-	tags[2] = nostr.Tag{"h", a.HandlerPublic}
+	tags[2] = nostr.Tag{"h", a.HandlerPubKey()}
 	for _, signer := range a.Signers {
 		tags = append(tags, nostr.Tag{"p", signer.PeerPubKey, signer.Shard.Hex()})
 	}
