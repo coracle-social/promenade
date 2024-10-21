@@ -7,38 +7,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 )
 
-// Polynomial over scalars, represented as a list of t+1 coefficients, where t is the threshold.
-// The constant term is in the first position and the highest degree coefficient is in the last position.
-// All operations on the polynomial's coefficient are done modulo the scalar's group order.
-type Polynomial []*btcec.ModNScalar
-
-func shardReturnPolynomial(
-	secret *btcec.ModNScalar,
-	threshold, maxParticipants int,
-) ([]KeyShard, Polynomial, error) {
-	if maxParticipants < threshold {
-		return nil, nil, fmt.Errorf("wrong number of shards")
-	}
-
-	p, err := makePolynomial(secret, threshold)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pubkey := &btcec.JacobianPoint{}
-	btcec.ScalarBaseMultNonConst(p[0], pubkey)
-	pubkey.ToAffine()
-
-	// Evaluate the polynomial for each point x=1,...,n
-	secretKeyShards := make([]KeyShard, maxParticipants)
-
-	for i := 0; i < maxParticipants; i++ {
-		secretKeyShards[i] = makeKeyShard(i+1, p, pubkey)
-	}
-
-	return secretKeyShards, p, nil
-}
-
 func makePolynomial(secret *btcec.ModNScalar, threshold int) (Polynomial, error) {
 	if threshold < 1 {
 		return nil, fmt.Errorf("wrong threshold")
@@ -50,9 +18,8 @@ func makePolynomial(secret *btcec.ModNScalar, threshold int) (Polynomial, error)
 	p := make(Polynomial, threshold)
 
 	i := 0
-
-	p[0] = new(btcec.ModNScalar)
-	p[0].Set(secret)
+	p[i] = new(btcec.ModNScalar)
+	p[i].Set(secret)
 	i++
 
 	for ; i < threshold; i++ {
@@ -75,8 +42,8 @@ func makePolynomialFromListFunc[S ~[]E, E any](s S, f func(E) *btcec.ModNScalar)
 }
 
 func makeKeyShard(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShard {
-	ids := new(btcec.ModNScalar).SetInt(uint32(id))
-	yi := p.Evaluate(ids)
+	sid := new(btcec.ModNScalar).SetInt(uint32(id))
+	yi := p.evaluate(sid)
 
 	pksh := new(btcec.JacobianPoint)
 	btcec.ScalarBaseMultNonConst(yi, pksh)
@@ -93,8 +60,13 @@ func makeKeyShard(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShard {
 	}
 }
 
-// Evaluate evaluates the polynomial p at point x using Horner's method.
-func (p Polynomial) Evaluate(x *btcec.ModNScalar) *btcec.ModNScalar {
+// Polynomial over scalars, represented as a list of t+1 coefficients, where t is the threshold.
+// The constant term is in the first position and the highest degree coefficient is in the last position.
+// All operations on the polynomial's coefficient are done modulo the scalar's group order.
+type Polynomial []*btcec.ModNScalar
+
+// evaluate evaluates the polynomial p at point x using Horner's method.
+func (p Polynomial) evaluate(x *btcec.ModNScalar) *btcec.ModNScalar {
 	// since value is an accumulator and starts with 0, we can skip multiplying by x, and start from the end
 	value := new(btcec.ModNScalar).Set(p[len(p)-1])
 	for i := len(p) - 2; i >= 0; i-- {

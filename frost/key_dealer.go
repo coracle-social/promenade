@@ -9,25 +9,32 @@ func TrustedKeyDeal(
 	threshold, maxSigners int,
 ) ([]KeyShard, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
 	// negate this here before splitting the key if Y is odd because of bip-340
-	privateKey := btcec.PrivKeyFromScalar(secret)
 	pubkey := new(btcec.JacobianPoint)
-	privateKey.PubKey().AsJacobian(pubkey)
+	btcec.ScalarBaseMultNonConst(secret, pubkey)
 	if pubkey.Y.IsOdd() {
 		secret.Negate()
+		btcec.ScalarBaseMultNonConst(secret, pubkey)
 	}
+	pubkey.ToAffine()
 	// ~
 
-	privateKeyShards, poly, err := shardReturnPolynomial(
-		secret,
-		threshold,
-		maxSigners,
-	)
+	if maxSigners < threshold || threshold <= 0 {
+		panic("bad threshold")
+	}
+
+	polynomial, err := makePolynomial(secret, threshold)
 	if err != nil {
 		panic(err)
 	}
 
-	commits := VSSCommit(poly)
+	// evaluate the polynomial for each point x=1,...,n
+	shards := make([]KeyShard, maxSigners)
+	for i := 0; i < maxSigners; i++ {
+		shards[i] = makeKeyShard(i+1, polynomial, pubkey)
+	}
+
+	commits := VSSCommit(polynomial)
 	pubkey = commits[0]
 
-	return privateKeyShards, pubkey, commits
+	return shards, pubkey, commits
 }

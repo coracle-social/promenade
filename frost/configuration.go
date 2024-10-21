@@ -77,8 +77,11 @@ func (c *Configuration) ValidateKeyShard(keyshard KeyShard) error {
 		return err
 	}
 
-	if !c.PublicKey.X.Equals(&keyshard.PublicKey.X) || !c.PublicKey.Y.Equals(&keyshard.PublicKey.Y) {
-		return fmt.Errorf("provided key shard has a different public key than the one registered for that signer in the configuration")
+	if !c.PublicKey.X.Equals(&keyshard.PublicKey.X) || (c.PublicKey.Y.IsOdd() != keyshard.PublicKey.Y.IsOdd()) {
+		return fmt.Errorf("provided key shard has a different public key than the one registered for that signer in the configuration: expected %s/%v, got %s/%v",
+			c.PublicKey.X, c.PublicKey.Y.IsOdd(),
+			keyshard.PublicKey.X, keyshard.PublicKey.Y.IsOdd(),
+		)
 	}
 
 	if keyshard.Secret == nil || keyshard.Secret.IsZero() {
