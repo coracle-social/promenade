@@ -61,7 +61,11 @@ var app = &cli.Command{
 			return err
 		}
 
-		publicKey, _ := nostr.GetPublicKey(data.SecretKey)
+		publicKey, err := nostr.GetPublicKey(data.SecretKey)
+		if err != nil {
+			return fmt.Errorf("invalid secret key")
+		}
+
 		fmt.Fprintf(os.Stderr, "[] running as %s\n", publicKey)
 
 		pool = nostr.NewSimplePool(context.Background(),

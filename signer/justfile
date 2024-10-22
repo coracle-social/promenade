@@ -1,0 +1,7 @@
+build:
+    CC=musl-gcc go build -ldflags="-s -w -linkmode external -extldflags '-static' -X main.compileTimeTs=$(date '+%s') -s -w" -o ./signer
+
+deploy target: build
+    ssh root@{{target}} 'systemctl stop promenade-signer'
+    scp signer {{target}}:promenade-signer/signer
+    ssh root@{{target}} 'systemctl start promenade-signer'

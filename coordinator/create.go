@@ -12,6 +12,11 @@ func filterOutEverythingExceptWhatWeWant(ctx context.Context, evt *nostr.Event) 
 		return false, ""
 	}
 	if evt.Kind == common.KindAccountRegistration {
+		ar := common.AccountRegistration{}
+		if err := ar.Decode(evt); err != nil {
+			return true, "error: account registration event is malformed: " + err.Error()
+		}
+
 		return false, ""
 	}
 	return true, "blocked: this event is not accepted"

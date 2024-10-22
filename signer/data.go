@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/mitchellh/go-homedir"
 )
 
 type Data struct {
@@ -49,11 +47,7 @@ func storeData(data Data) error {
 
 func readData(dir string) (Data, error) {
 	if dir == "" {
-		var err error
-		dir, err = homedir.Expand("~/.config/promd")
-		if err != nil {
-			return Data{}, fmt.Errorf("can't get ~/.config/promd directory: %w", err)
-		}
+		return Data{}, fmt.Errorf("missing --dir")
 	}
 
 	if bdata, err := os.ReadFile(filepath.Join(dir, "data.json")); err != nil && !os.IsNotExist(err) {

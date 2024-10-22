@@ -39,12 +39,7 @@ func (p PublicKeyShard) Encode() []byte {
 	writePointTo(out[6:], p.PublicKey)
 
 	for i, c := range p.VssCommitment {
-		if c.Y.IsOdd() {
-			out[6+33+i*33] = secp256k1.PubKeyFormatCompressedOdd
-		} else {
-			out[6+33+i*33] = secp256k1.PubKeyFormatCompressedEven
-		}
-		c.X.PutBytesUnchecked(out[6+33+i*33+1:])
+		writePointTo(out[6+33+i*33:], c)
 	}
 
 	return out
