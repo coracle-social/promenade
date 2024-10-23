@@ -119,6 +119,9 @@ var create = &cli.Command{
 			return fmt.Errorf("we need some read relays first")
 		}
 		ack := make(chan struct{})
+
+		shardsSentEventId := make(map[string]struct{})
+
 		go func() {
 			for evt := range pool.SubMany(ctx, ourReadRelays, nostr.Filters{
 				{
@@ -128,6 +131,14 @@ var create = &cli.Command{
 					},
 				},
 			}) {
+				eTag := evt.Tags.GetFirst([]string{"e", ""})
+				if eTag == nil {
+					continue
+				}
+				if _, isShardSent := shardsSentEventId[(*eTag)[1]]; !isShardSent {
+					continue
+				}
+
 				if slices.Contains(signerPubkeys, evt.PubKey) && !slices.Contains(acks, evt.PubKey) {
 					acks = append(acks, evt.PubKey)
 					if len(acks) == len(signerPubkeys) {
@@ -175,6 +186,8 @@ var create = &cli.Command{
 			shardEvt.Tags = append(shardEvt.Tags, tag)
 
 			shardEvt.Sign(sec)
+
+			shardsSentEventId[shardEvt.ID] = struct{}{}
 
 			ok := false
 			for res := range pool.PublishMany(ctx, relays, shardEvt) {

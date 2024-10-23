@@ -83,7 +83,8 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 			CreatedAt: nostr.Now(),
 			Kind:      common.KindShardACK,
 			Tags: nostr.Tags{
-				{"p", evt.PubKey},
+				{"p", shardEvt.PubKey},
+				{"e", shardEvt.ID},
 			},
 		}
 		kr.SignEvent(ctx, &ackEvt)
