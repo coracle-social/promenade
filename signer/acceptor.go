@@ -44,18 +44,20 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 	// listen for incoming shards
 	fmt.Fprintf(os.Stderr, "[acceptor] listening for new shards at %s\n", ourInbox[0])
 	acceptedTotal := 0
-	for evt := range pool.SubMany(ctx, ourInbox, nostr.Filters{
+	now := nostr.Now()
+	for shardEvt := range pool.SubMany(ctx, ourInbox, nostr.Filters{
 		{
 			Kinds: []int{common.KindShard},
 			Tags: nostr.TagMap{
 				"p": []string{ourPubkey},
 			},
+			Since: &now,
 		},
 	}) {
-		fmt.Fprintf(os.Stderr, "[acceptor] got shard from %s\n", evt.PubKey)
+		fmt.Fprintf(os.Stderr, "[acceptor] got shard from %s: %s\n", shardEvt.PubKey, shardEvt.ID)
 
 		// check proof-of-work
-		if work := nip13.CommittedDifficulty(evt.Event); work < 20 {
+		if work := nip13.CommittedDifficulty(shardEvt.Event); work < 20 {
 			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need 20, got %d\n", work)
 			continue
 		}
@@ -63,7 +65,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 		// get metadata and check validity
 		shard := frost.KeyShard{}
 
-		plaintextShard, err := kr.Decrypt(ctx, evt.Content, evt.PubKey)
+		plaintextShard, err := kr.Decrypt(ctx, shardEvt.Content, shardEvt.PubKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[acceptor] failed to decrypt shard: %s\n", err)
 			continue
@@ -72,7 +74,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 			fmt.Fprintf(os.Stderr, "[acceptor] got broken shard: %s\n", err)
 			continue
 		}
-		coordinator := evt.Tags.GetFirst([]string{"coordinator", ""})
+		coordinator := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
 		if coordinator == nil || !nostr.IsValidRelayURL((*coordinator)[1]) {
 			fmt.Fprintf(os.Stderr, "[acceptor] got broken coordinator url '%s'\n", (*coordinator)[1])
 			continue
@@ -92,7 +94,10 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 		// first we need their read relays
 		theirInbox := make([]string, 0, 5)
 		for evt := range pool.SubManyEose(ctx, common.IndexRelays, nostr.Filters{
-			{Kinds: []int{10002}, Authors: []string{evt.PubKey}},
+			{
+				Kinds:   []int{10002},
+				Authors: []string{shardEvt.PubKey},
+			},
 		}) {
 			for _, tag := range evt.Tags.All([]string{"r", ""}) {
 				if len(tag) == 2 || tag[2] == "read" {
@@ -102,6 +107,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 		}
 		success := false
 		errs := make(map[string]string, len(theirInbox))
+		fmt.Fprintf(os.Stderr, "[acceptor] sending ack to %v\n", theirInbox)
 		for res := range pool.PublishMany(ctx, theirInbox, ackEvt) {
 			if res.Error == nil {
 				success = true
@@ -110,18 +116,18 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 			}
 		}
 		if !success {
-			fmt.Fprintf(os.Stderr, "[acceptor] failed to send ack back to %s: %v\n", evt.PubKey, errs)
+			fmt.Fprintf(os.Stderr, "[acceptor] failed to send ack back to %s: %v\n", shardEvt.PubKey, errs)
 			continue
 		}
 
 		// append to our data store (delete previous entries for the same pubkey)
 		data.KeyGroups = slices.DeleteFunc(data.KeyGroups, func(kg KeyGroup) bool {
-			return kg.AggregatePublicKey == evt.PubKey
+			return kg.AggregatePublicKey == shardEvt.PubKey
 		})
 		data.KeyGroups = append(data.KeyGroups, KeyGroup{
 			Coordinator:           (*coordinator)[1],
 			EncodedSecretKeyShard: plaintextShard,
-			AggregatePublicKey:    evt.PubKey,
+			AggregatePublicKey:    shardEvt.PubKey,
 		})
 		if err := storeData(data); err != nil {
 			panic(err)

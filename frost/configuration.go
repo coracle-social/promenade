@@ -94,23 +94,13 @@ func (c *Configuration) ValidateKeyShard(keyshard KeyShard) error {
 
 	if !pt.X.Equals(&keyshard.PublicKeyShard.PublicKey.X) || !pt.Y.Equals(&keyshard.PublicKeyShard.PublicKey.Y) {
 		public := make([]byte, 33)
-		if keyshard.PublicKey.Y.IsOdd() {
-			public[0] = secp256k1.PubKeyFormatCompressedOdd
-		} else {
-			public[0] = secp256k1.PubKeyFormatCompressedOdd
-		}
-		keyshard.PublicKey.X.PutBytesUnchecked(public[1:])
+		writePointTo(public, keyshard.PublicKeyShard.PublicKey)
 
 		derived := make([]byte, 33)
-		if pt.Y.IsOdd() {
-			derived[0] = secp256k1.PubKeyFormatCompressedOdd
-		} else {
-			derived[0] = secp256k1.PubKeyFormatCompressedOdd
-		}
-		pt.X.PutBytesUnchecked(derived[1:])
+		writePointTo(derived, pt)
 
-		return fmt.Errorf("provided key shard has a public key (%x) that doesn't match its own secret key (%x)",
-			public, derived)
+		return fmt.Errorf("provided key shard has a public key (%x) that doesn't match its own secret key (%x=>%x)",
+			public, keyshard.Secret.Bytes(), derived)
 	}
 
 	return nil
