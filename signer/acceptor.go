@@ -52,9 +52,11 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 			},
 		},
 	}) {
+		fmt.Fprintf(os.Stderr, "[acceptor] got shard from %s\n", evt.PubKey)
+
 		// check proof-of-work
-		if work := nip13.CommittedDifficulty(evt.Event); work < 22 {
-			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need 22, got %d\n", work)
+		if work := nip13.CommittedDifficulty(evt.Event); work < 20 {
+			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need 20, got %d\n", work)
 			continue
 		}
 
