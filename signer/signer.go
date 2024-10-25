@@ -20,7 +20,7 @@ import (
 var sessions = xsync.NewMapOf[string, chan *nostr.Event]()
 
 func runSigner(ctx context.Context) {
-	ourPubkey, _ := nostr.GetPublicKey(data.SecretKey)
+	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	filter := nostr.Filter{
 		Kinds: []int{common.KindCommit, common.KindConfiguration, common.KindEventToBeSigned},
@@ -30,30 +30,41 @@ func runSigner(ctx context.Context) {
 	}
 
 	dfs := make([]nostr.DirectedFilters, 0, 2)
-	for i, kg := range data.KeyGroups {
+	results, err := eventsdb.QueryEvents(ctx, nostr.Filter{Kinds: []int{common.KindStoredShard}})
+	if err != nil {
+		panic(err)
+	}
+
+	ngroups := 0
+	for shardEvt := range results {
+		coordinatorTag := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
+		coordinator := (*coordinatorTag)[1]
+
 		idx := slices.IndexFunc(dfs, func(df nostr.DirectedFilters) bool {
-			return df.Relay == nostr.NormalizeURL(kg.Coordinator)
+			return df.Relay == nostr.NormalizeURL(coordinator)
 		})
 		if idx == -1 {
-			info, err := nip11.Fetch(ctx, kg.Coordinator)
+			info, err := nip11.Fetch(ctx, coordinator)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error on nip11 request to %s on group %d: %s\n", kg.Coordinator, i, err)
+				fmt.Fprintf(os.Stderr, "error on nip11 request to %s: %s\n", coordinator, err)
 				continue
 			} else if !nostr.IsValidPublicKey(info.PubKey) {
-				fmt.Fprintf(os.Stderr, "coordinator %s has invalid pubkey %s on group %d\n", kg.Coordinator, info.PubKey, i)
+				fmt.Fprintf(os.Stderr, "coordinator %s has invalid pubkey %s\n", coordinator, info.PubKey)
 				continue
 			}
 			filter.Authors = []string{info.PubKey}
 			dfs = append(dfs, nostr.DirectedFilters{
-				Relay:   nostr.NormalizeURL(kg.Coordinator),
+				Relay:   nostr.NormalizeURL(coordinator),
 				Filters: nostr.Filters{filter},
 			})
 		}
+
+		ngroups++
 	}
 
 	mainEventStream := pool.BatchedSubMany(ctx, dfs)
 
-	fmt.Fprintf(os.Stderr, "[signer] started waiting for sign requests from %d key groups\n", len(data.KeyGroups))
+	fmt.Fprintf(os.Stderr, "[signer] started waiting for sign requests from %d key groups\n", ngroups)
 	for ie := range mainEventStream {
 		evt := ie.Event
 		switch evt.Kind {
@@ -83,7 +94,7 @@ func runSigner(ctx context.Context) {
 
 func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event) error {
 	sendToCoordinator := func(evt *nostr.Event) {
-		if err := evt.Sign(data.SecretKey); err != nil {
+		if err := kr.SignEvent(ctx, evt); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
 			return
 		}
@@ -107,10 +118,8 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		return fmt.Errorf("error initializing config: %w", err)
 	}
 
-	idx := slices.IndexFunc(data.KeyGroups, func(kg KeyGroup) bool {
-		return kg.AggregatePublicKey == cfg.PublicKey.X.String()
-	})
-	if idx == -1 {
+	res, _ := eventsdb.QuerySync(ctx, nostr.Filter{Authors: []string{cfg.PublicKey.X.String()}})
+	if len(res) == 0 {
 		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
 	}
 
@@ -120,7 +129,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	sessions.Store(sessionId, ch)
 
 	shard := frost.KeyShard{}
-	if err := shard.DecodeHex(data.KeyGroups[idx].EncodedSecretKeyShard); err != nil {
+	if err := shard.DecodeHex(res[0].Content); err != nil {
 		return fmt.Errorf("failed to decode our shard: %w", err)
 	}
 

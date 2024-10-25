@@ -4,18 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
 	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/keyer"
 	"github.com/nbd-wtf/go-nostr/nip13"
 )
 
 func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restartSigner func()) {
-	kr, _ := keyer.NewPlainKeySigner(data.SecretKey)
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	// update our 10002 list if necessary
@@ -121,16 +118,25 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 		}
 
 		// append to our data store (delete previous entries for the same pubkey)
-		data.KeyGroups = slices.DeleteFunc(data.KeyGroups, func(kg KeyGroup) bool {
-			return kg.AggregatePublicKey == shardEvt.PubKey
-		})
-		data.KeyGroups = append(data.KeyGroups, KeyGroup{
-			Coordinator:           (*coordinator)[1],
-			EncodedSecretKeyShard: plaintextShard,
-			AggregatePublicKey:    shardEvt.PubKey,
-		})
-		if err := storeData(data); err != nil {
+		results, err := eventsdb.QuerySync(ctx, nostr.Filter{Kinds: []int{common.KindStoredShard}, Authors: []string{shardEvt.PubKey}})
+		if err != nil {
 			panic(err)
+		}
+		// store now just to prevent losing data in between
+		storedShard := nostr.Event{
+			Kind:    common.KindStoredShard,
+			PubKey:  shardEvt.PubKey,
+			Tags:    shardEvt.Tags,
+			Content: plaintextShard,
+		}
+		storedShard.ID = storedShard.GetID()
+		if err := eventsdb.SaveEvent(ctx, &storedShard); err != nil {
+			panic(err)
+		}
+
+		// and only now delete the old stuff
+		for _, oldShardEvt := range results {
+			eventsdb.DeleteEvent(ctx, oldShardEvt)
 		}
 
 		// if we get too many registrations, stop accepting

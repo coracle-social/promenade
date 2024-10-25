@@ -5,8 +5,9 @@ const (
 	KindAccountRegistration = 16430
 
 	// user sends a shard encrypted to the signer, gets an ACK back if it's accepted
-	KindShard    = 26428
-	KindShardACK = 26429
+	KindShard       = 26428
+	KindShardACK    = 26429
+	KindStoredShard = 26430
 
 	// signing flow events
 	KindConfiguration    = 26430 // coordinator to signer

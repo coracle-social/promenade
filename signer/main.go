@@ -4,17 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
+	"github.com/fiatjaf/eventstore"
+	"github.com/fiatjaf/eventstore/badger"
 	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/keyer"
 	"github.com/urfave/cli/v3"
 )
 
 var (
-	dir  string
-	pool *nostr.SimplePool
-	data Data
+	kr       nostr.Keyer
+	dir      string
+	pool     *nostr.SimplePool
+	eventsdb eventstore.RelayWrapper
 )
 
 func main() {
@@ -29,10 +31,14 @@ var app = &cli.Command{
 	Name: "signer",
 	Flags: []cli.Flag{
 		&cli.StringFlag{
-			Name:        "dir",
-			Aliases:     []string{"d"},
-			Usage:       "path to the directory that stores things",
-			Destination: &dir,
+			Name:     "sec",
+			Usage:    "secret key we will use",
+			Required: true,
+		},
+		&cli.StringFlag{
+			Name:  "db",
+			Usage: "path to the eventstore directory",
+			Value: "./db",
 		},
 		&cli.StringFlag{
 			Name:  "accept-relay",
@@ -45,39 +51,31 @@ var app = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, c *cli.Command) error {
-		if err := lockDir(); err != nil {
-			return fmt.Errorf("can't run two instances of signer at the same directory '%s': %w", dir, err)
-		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-
-		go func() {
-			<-ctx.Done()
-			unlockDir()
-		}()
-
-		data, err := readData(dir)
-		if err != nil {
-			return err
-		}
-
-		publicKey, err := nostr.GetPublicKey(data.SecretKey)
-		if err != nil {
-			return fmt.Errorf("invalid secret key")
-		}
-
-		fmt.Fprintf(os.Stderr, "[] running as %s\n", publicKey)
+		var err error
 
 		pool = nostr.NewSimplePool(context.Background(),
 			nostr.WithAuthHandler(
 				func(ctx context.Context, ie nostr.RelayEvent) error {
-					return ie.Event.Sign(data.SecretKey)
+					return kr.SignEvent(ctx, ie.Event)
 				},
 			),
 		)
 
+		store := &badger.BadgerBackend{Path: c.String("db")}
+		err = store.Init()
+		if err != nil {
+			return fmt.Errorf("failed to open db at %s: %w", c.String("db"), err)
+		}
+		eventsdb = eventstore.RelayWrapper{Store: store}
+
+		kr, err = keyer.New(ctx, pool, c.String("sec"), nil)
+		if err != nil {
+			return fmt.Errorf("invalid secret key: %w", err)
+		}
+		publicKey, _ := kr.GetPublicKey(ctx)
+		fmt.Fprintf(os.Stderr, "[] running as %s\n", publicKey)
+
 		signerCtx, cancelSigner := context.WithCancel(ctx)
-		go runSigner(signerCtx)
 
 		restartSigner := func() {
 			fmt.Fprintf(os.Stderr, "[signer] restarting signer...\n")
@@ -90,8 +88,7 @@ var app = &cli.Command{
 			go runAcceptor(ctx, relay, c.Uint("accept-max"), restartSigner)
 		}
 
-		<-ctx.Done()
-
+		runSigner(signerCtx)
 		return nil
 	},
 }
