@@ -83,7 +83,7 @@ export async function shardGetBunker(
               acc + (pow * pow * pow) / (powTarget * powTarget * powTarget),
             0
           ) /
-            threshold) *
+            maxSigners) *
             100
         )
       }
