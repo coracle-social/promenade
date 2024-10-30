@@ -1,0 +1,68 @@
+promenade
+=========
+
+I forgot what was the meaning of this acronym.
+
+internal protocol flow
+----------------------
+
+1. _client_ generates a `user-secret-key` locally -- or the user inputs a preexisting key;
+2. _client_ shards the key into as `n` shards, using the `TrustedKeyDeal()` function under `frost/key_dealer.go` or `trustedKeyDeal()` under `js-dealer/shardkey.ts`, it also has to pick a number `m`, which will be the minimum threshold for generating signatures using FROST;
+3. if it doesn't have one already, _client_ signs and publishes a `kind:10002` relay list with some inbox relays;
+4. _client_ picks a number `n` of signers, identified by their public keys, each of which will receive a shard;
+5. _client_ fetches `kind:10002` relays for each of the signers;
+6. _client_ picks a _coordinator_ that acts as a relay;
+7. _client_ builds a `kind:26428` "shard event" for each _signer_, as follows:
+
+  {
+    "kind": 26428,
+    "pubkey": "<user-pubkey>",
+    "tags": [
+      ["p", "<signer-pubkey>"],
+      ["coordinator", "<coordinator-url>"],
+    ],
+    "content": nip44_encrypt("<hex-encoded-secret-key-shard>")
+  }
+
+  where `<hex-encoded-secret-key-shard>` is given by the hex-encoding of the concatenation of
+    - [encoded-public-shard]: given by:
+      - [public-shard-id]: 2-bytes (little-endian)
+      - [number-of-vss-commits]: 4-bytes (little-endian)
+      - [shard-public-key]: 33-bytes (compressed)
+      - <number-of-vss-commits> * [vss-commit]: 33-bytes (compressed) each
+    - [shard-secret-key]: 32-bytes (big-endian)
+    - [user-pubkey]: 33-bytes (compressed)
+
+8. _client_ builds NIP-13 proof-of-work into that event of at least 20 bits;
+9. _client_ sends the signed "shard event" to the each desired _signer_ in their "read" relays as given by their `kind:10002`;
+10. _client_ starts listening on their own "read" relays for replies from _signer_;
+11. _signer_ receives the event from _client_, checks the proof-of-work, decrypts and validates the `<encoded-secret-key-shard>`, then saves that information locally somehow;
+12. _signer_ builds a `kind:26429` "shard ack event", as follows:
+
+  {
+    "kind": 26429,
+    "pubkey": "<signer-pubkey>",
+    "tags": [
+      ["e", "<shard-event-id>"],
+      ["p", "<user-pubkey>"]
+    ]
+  }
+
+13. _signer_ fetches `kind:10002` relays for `<user-pubkey>` and sends the "shard ack event" to the "read" relays;
+14. upon receiving the "shard ack event" from all the signers, _client_ builds a `kind:16430` "account registration event" as follows:
+
+  {
+    "kind": 16430,
+    "pubkey": "<user-pubkey>",
+    "tags": [
+      ["handlersecret", "<random-private-key>"],
+      ["h", "<public-key-corresponding-to-handlersecret>"],
+      ["threshold", "<m>"],
+      ["p", "<signer-pubkey>", "<hex-encoded-public-shard>"] * n
+    ]
+  }
+
+  in which the `"p"` tag is repeated once for each signer, and "<hex-encoded-public-shard>" is encoded just as when part of the "encoded-secret-key-shard" description above.
+
+15. upon receiving the "account registration event", _coordinator_ stores it and keeps it secret;
+16. _coordinator_ should now listen for NIP-46 calls directed at its own relay, targeting `<public-key-corresponding-to-handlersecret>`.
