@@ -1,7 +1,13 @@
 import {bytesToHex} from '@noble/curves/abstract/utils'
-import { SimplePool } from 'nostr-tools/pool'
+import {SimplePool} from 'nostr-tools/pool'
 import type {SubCloser} from 'nostr-tools/abstract-pool'
-import {finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent, type UnsignedEvent} from 'nostr-tools/pure'
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  type NostrEvent,
+  type UnsignedEvent
+} from 'nostr-tools/pure'
 import {encrypt, getConversationKey} from 'nostr-tools/nip44'
 
 import {trustedKeyDeal} from './shardkey'
@@ -18,11 +24,11 @@ export async function shardGetBunker(
   powTarget: number,
   inboxes: {[pubkey: string]: string[]},
   ourInbox: string[],
-minePow: (
-  unsigned: UnsignedEvent,
-  difficulty: number,
-  onBetterHash: (pow: number) => void
-) => Promise<Omit<NostrEvent, 'sig'>>,
+  minePow: (
+    unsigned: UnsignedEvent,
+    difficulty: number,
+    onBetterHash: (pow: number) => void
+  ) => Promise<Omit<NostrEvent, 'sig'>>,
   onProgress: (pct: number) => void
 ): Promise<string> {
   const now = Math.ceil(Date.now() / 1000)
