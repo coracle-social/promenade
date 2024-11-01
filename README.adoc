@@ -1,10 +1,10 @@
-promenade
-=========
+= promenade
 
 I forgot what was the meaning of this acronym.
 
-internal protocol flow
-----------------------
+== internal protocol flow
+
+=== key distribution
 
 1. _client_ generates a `user-secret-key` locally -- or the user inputs a preexisting key;
 2. _client_ shards the key into as `n` shards, using the `TrustedKeyDeal()` function under `frost/key_dealer.go` or `trustedKeyDeal()` under `js-dealer/shardkey.ts`, it also has to pick a number `m`, which will be the minimum threshold for generating signatures using FROST;
@@ -24,7 +24,7 @@ internal protocol flow
     "content": nip44_encrypt("<hex-encoded-secret-key-shard>")
   }
 
-  where `<hex-encoded-secret-key-shard>` is given by the hex-encoding of the concatenation of
+  where `<hex-encoded-secret-key-shard>` is given by the hex-encoded of the concatenation of
     - [encoded-public-shard]: given by:
       - [public-shard-id]: 2-bytes (little-endian)
       - [number-of-vss-commits]: 4-bytes (little-endian)
@@ -62,7 +62,91 @@ internal protocol flow
     ]
   }
 
-  in which the `"p"` tag is repeated once for each signer, and "<hex-encoded-public-shard>" is encoded just as when part of the "encoded-secret-key-shard" description above.
+  in which the `"p"` tag is repeated once for each signer, and "<hex-encoded-public-shard>" is encoded just as above.
 
 15. upon receiving the "account registration event", _coordinator_ stores it and keeps it secret;
 16. _coordinator_ should now listen for NIP-46 calls directed at its own relay, targeting `<public-key-corresponding-to-handlersecret>`.
+
+=== signing
+
+1. _coordinator_ listens for all NIP-46 events targeting `<public-key-corresponding-to-handlersecret>`;
+2. upon receiving a NIP-46 request, _coordinator_ matches it against its `p` tag with a stored `kind:16430`, uses `handlersecret` to decrypt (and later sign and encrypt the response);
+3. for `get_public_key` _coordinator_ can just answer immediately;
+4. for `sign_event` _coordinator_ then finds out what signers are online and connected, chooses `m` of them and initiates a signing session;
+5. _coordinator_ sends a `kind:26430` "configuration event" to each chosen _signer_ in the form:
+
+  {
+    "kind": 26430,
+    "pubkey": "<coordinator-pubkey>",
+    "tags": [
+      ["p", "<signer-pubkey>"]
+    ],
+    "content": "<hex-encoded-configuration-object>"
+  }
+
+  where <hex-encoded-configuration-object> is given by the hex-encoded concatenation of
+    - [m]: 2-bytes (little-endian)
+    - [n]: 2-bytes (little-endian)
+    - [number-of-signers]: 2-bytes (little-endian)
+    - [user-pubkey]: 33-bytes (compressed)
+    - <number-of-signers> * [encoded-public-shard] (as above)
+
+6. upon receiving this, _signer_ generates its local commitments, or a pair of public and private nonces, and sends the public parts to _coordinator_ in a `kind:26431` "commit event", as follows:
+
+  {
+    "kind": 26431,
+    "pubkey": "<signer-pubkey>",
+    "tags": [
+      ["e", "<configuration-event-id>"],
+      ["p", "<user-pubkey>"]
+    ],
+    "content": "<hex-encoded-commit>"
+  }
+
+  where <hex-encoded-commit> is given by the hex-encoded concatenation of
+    - [commit-id]: 8-bytes (little-endian)
+    - [signer-id]: 2-bytes (little-endian)
+    - [binding-nonce-point]: 33-bytes (compressed)
+    - [hiding-nonce-point]: 33-bytes (compressed)
+
+7. upon receiving commits from all signers, _coordinator_ then sends all the commits back to all the signers, in new events signed by `<coordinator-pubkey>`:
+
+  {
+    "kind": 26431,
+    "pubkey": "<coordinator-pubkey>",
+    "tags": [
+      ["e", "<configuration-event-id>"],
+      ["p", "<signer-pubkey>"]
+    ],
+    "content": "<hex-encoded-commit>"
+  }
+
+8. then _coordinator_ sends the event that is to be signed to all signers in a `kind:26432` event, in the form:
+
+  {
+    "kind": 26432,
+    "pubkey": "<coordinator-pubkey>",
+    "tags": [
+      ["e", "<configuration-event-id>"],
+      ["p", "<signer-pubkey>"]
+    ],
+    "content": "<json-encoded-event-to-be-signed>"
+  }
+
+9. finally, each _signer_ groups together all commits and uses these together with their secret nonces and the hash of the event to be signed to produce a `<partial-signature>` and sends that back to _coordinator_ in a `kind:26433` event, as follows:
+
+  {
+    "kind": 26433,
+    "pubkey": "<signer-pubkey>",
+    "tags": [
+      ["e", "<configuration-event-id>"],
+      ["p", "<user-pubkey>"]
+    ],
+    "content": "<hex-encoded-partial-signature>"
+  }
+
+  where <hex-encoded-partial-signature> is given by the hex-encoded concatenation of:
+    - [signer-id]: 2-bytes (little-endian)
+    - [partial-signature-scalar]: 32-bytes (big-endian)
+
+10. _coordinator_ assembles all the partial signatures and builds the aggregated signature which can then be put into the event and sent as a response to the `sign_event` NIP-46 request.
