@@ -11,7 +11,7 @@ require (
 	github.com/fiatjaf/khatru v0.9.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mailru/easyjson v0.7.7
-	github.com/nbd-wtf/go-nostr v0.40.0
+	github.com/nbd-wtf/go-nostr v0.41.0
 	github.com/puzpuzpuz/xsync/v3 v3.4.0
 	github.com/rs/cors v1.11.1
 	github.com/rs/zerolog v1.32.0
