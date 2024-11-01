@@ -2,6 +2,15 @@
 
 I forgot what was the meaning of this acronym.
 
+== implementation details
+
+the signature algorithm is implemented roughly as described in the FROST paper, and most of it was copied from https://github.com/bytemare/frost and adapted to use `github.com/btcsuite/btcd/btcec`, but it has the following substantial changes:
+
+  - for BIP-340 compatibility, the key dealing algorithm negates the secret key before sharding if its public key's `y` is odd;
+  - for BIP-340 compatibility, when creating partial signatures, signers have to compute the group commitment, and if it's `y` is odd then all the public nonces and their own private nonce is negated;
+  - for BIP-340 compatibility, then signing challenge is computed with `taggedhash("BIP0340/challenge", group-commitment-x || user-pubkey-x || event_id)`;
+  - because it felt appropriate, other parts of the algorithm that would use hashes also use `taggedhash()` with different tags, the code will speak better than I can.
+
 == internal protocol flow
 
 === key distribution
