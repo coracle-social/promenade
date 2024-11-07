@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@noble/curves": "npm:@noble/curves@^1.6.0",
+    "@nostr/tools": "jsr:@nostr/tools@^2.10.1"
+  }
+}
