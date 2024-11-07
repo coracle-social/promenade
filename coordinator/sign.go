@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"slices"
 
 	"fiatjaf.com/promenade/common"
@@ -26,7 +27,7 @@ type GroupContext struct {
 }
 
 type Session struct {
-	chosenSigners []string
+	chosenSigners map[string]common.Signer
 	ch            chan *nostr.Event
 }
 
@@ -39,20 +40,20 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	pubkey, _ := btcec.ParseJacobian(ipk)
 
 	// signers that are online and that we have chosen to participate in this round
-	chosenSigners := make([]string, 0, kuc.Threshold)
+	chosenSigners := make(map[string]common.Signer, kuc.Threshold)
 
 	cfg := &frost.Configuration{
-		Threshold:             int(kuc.Threshold),
-		MaxSigners:            len(kuc.Signers),
-		PublicKey:             &pubkey,
-		SignerPublicKeyShards: make([]frost.PublicKeyShard, len(kuc.Signers)),
+		Threshold:    int(kuc.Threshold),
+		MaxSigners:   len(kuc.Signers),
+		PublicKey:    &pubkey,
+		Participants: make([]int, len(kuc.Signers)),
 	}
 	for s, signer := range kuc.Signers {
-		cfg.SignerPublicKeyShards[s] = signer.Shard
+		cfg.Participants[s] = signer.Shard.ID
 
 		if len(chosenSigners) < cfg.Threshold {
 			if _, isOnline := onlineSigners.Load(signer.PeerPubKey); isOnline {
-				chosenSigners = append(chosenSigners, signer.PeerPubKey)
+				chosenSigners[signer.PeerPubKey] = signer
 			}
 		}
 	}
@@ -60,10 +61,6 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	// fail if we don't have enough online signers
 	if len(chosenSigners) < cfg.Threshold {
 		return fmt.Errorf("not enough signers online: have %d, needed %d", len(chosenSigners), cfg.Threshold)
-	}
-
-	if err := cfg.Init(); err != nil {
-		return fmt.Errorf("fail to initialize config: %w", err)
 	}
 
 	// step-1 (send): initialize each participant.
@@ -75,8 +72,10 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		Content:   cfg.Hex(),
 		Tags:      make(nostr.Tags, len(chosenSigners)),
 	}
-	for s, signer := range chosenSigners {
-		confEvt.Tags[s] = nostr.Tag{"p", signer}
+	i := 0
+	for _, signer := range chosenSigners {
+		confEvt.Tags[i] = nostr.Tag{"p", signer.PeerPubKey}
+		i++
 	}
 	confEvt.Sign(s.PrivateKey)
 	relay.BroadcastEvent(confEvt)
@@ -90,8 +89,8 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	})
 
 	// step-2 (receive): get all pre-commit nonces from signers
-	commitments := make([]frost.Commitment, len(chosenSigners))
-	for s := range chosenSigners {
+	commitments := make(map[string]frost.Commitment, len(chosenSigners))
+	for _, signer := range chosenSigners {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving commit")
@@ -105,32 +104,36 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			if err := commit.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode commit: %w", err)
 			}
-			commitments[s] = commit
+			commitments[signer.PeerPubKey] = commit
 		}
 	}
 
-	// step-3 (send): send all commits back to everybody (including themselves for simplicity).
-	for _, commit := range commitments {
-		commitEvt := &nostr.Event{
-			CreatedAt: nostr.Now(),
-			Kind:      common.KindCommit,
-			Content:   commit.Hex(),
-			Tags:      make(nostr.Tags, 1+len(chosenSigners)),
-		}
-
-		commitEvt.Tags[0] = nostr.Tag{"e", sessionId}
-		for s, signer := range chosenSigners {
-			commitEvt.Tags[1+s] = nostr.Tag{"p", signer}
-		}
-
-		commitEvt.Sign(s.PrivateKey)
-		relay.BroadcastEvent(commitEvt)
-	}
-
-	// step-4 (send): send event to be signed
+	// prepare event to be signed so we have our msg hash
 	event.PubKey = hex.EncodeToString(cfg.PublicKey.X.Bytes()[:])
 	msg := sha256.Sum256(event.Serialize())
 	event.ID = hex.EncodeToString(msg[:])
+
+	// prepare aggregated group commitment and finalNonce
+	groupCommitment, bindingCoefficient, finalNonce := cfg.ComputeGroupCommitment(
+		slices.Collect(maps.Values(commitments)), msg[:])
+
+	// step-3 (send): group commits and send the result to signers
+	commitEvt := &nostr.Event{
+		CreatedAt: nostr.Now(),
+		Kind:      common.KindGroupCommit,
+		Content:   groupCommitment.Hex(),
+		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
+	}
+	commitEvt.Tags[0] = nostr.Tag{"e", sessionId}
+	i = 0
+	for _, signer := range chosenSigners {
+		commitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
+		i++
+	}
+	commitEvt.Sign(s.PrivateKey)
+	relay.BroadcastEvent(commitEvt)
+
+	// step-4 (send): send event to be signed
 	jevt, _ := easyjson.Marshal(event)
 	evtEvt := &nostr.Event{
 		CreatedAt: nostr.Now(),
@@ -139,15 +142,18 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 	}
 	evtEvt.Tags[0] = nostr.Tag{"e", sessionId}
-	for s, signer := range chosenSigners {
-		evtEvt.Tags[1+s] = nostr.Tag{"p", signer}
+	i = 0
+	for _, signer := range chosenSigners {
+		evtEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
+		i++
 	}
 	evtEvt.Sign(s.PrivateKey)
 	relay.BroadcastEvent(evtEvt)
 
 	// step-5 (receive): get partial signature from each participant
 	partialSigs := make([]frost.PartialSignature, len(chosenSigners))
-	for s := range chosenSigners {
+	i = 0
+	for range chosenSigners {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving partial signature")
@@ -161,24 +167,27 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			if err := partialSig.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode partial signature from %s", evt.PubKey)
 			}
-			partialSigs[s] = partialSig
+
+			if err := cfg.VerifyPartialSignature(
+				chosenSigners[evt.PubKey].Shard,
+				commitments[evt.PubKey].BinoncePublic,
+				bindingCoefficient,
+				finalNonce,
+				partialSig,
+				msg[:],
+			); err != nil {
+				return fmt.Errorf("partial signature from %s isn't good: %w", evt.PubKey, err)
+			}
+
+			partialSigs[i] = partialSig
+			i++
 		}
 	}
 
 	// aggregate signature
-	sig, err := cfg.AggregateSignatures(, partialSigs)
+	sig, err := cfg.AggregateSignatures(finalNonce, partialSigs)
 	if err != nil {
 		return fmt.Errorf("failed to aggregate signatures: %w", err)
-	}
-
-	// check the signature and if any of the participants did something wrong
-	if ok := sig.Verify(msg[:], btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
-		for s, partialSig := range partialSigs {
-			if err := cfg.VerifyPartialSignature(partialSig, msg[:], commitments); err != nil {
-				return fmt.Errorf("signer %s failed: %w", chosenSigners[s], err)
-			}
-		}
-		return fmt.Errorf("signature %x is bad for unknown reasons", sig.Serialize())
 	}
 
 	event.Sig = hex.EncodeToString(sig.Serialize())
@@ -214,7 +223,7 @@ func handleSignerStuff(ctx context.Context, evt *nostr.Event) {
 	sessionId := (*eTag)[1]
 
 	if session, ok := signingSessions.Load(sessionId); ok {
-		if slices.Contains(session.chosenSigners, evt.PubKey) {
+		if _, ok := session.chosenSigners[evt.PubKey]; ok {
 			session.ch <- evt
 		}
 	}

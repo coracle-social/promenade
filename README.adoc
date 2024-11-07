@@ -118,22 +118,26 @@ the signature algorithm is implemented roughly as described in the FROST paper, 
     - [binding-nonce-point]: 33-bytes (compressed)
     - [hiding-nonce-point]: 33-bytes (compressed)
 
-7. upon receiving commits from all signers, _coordinator_ then sends all the commits back to all the signers, in new events signed by `<coordinator-pubkey>`:
+7. upon receiving commits from all signers, _coordinator_ then aggregates the commits into a group commit and sends it back to all the signers:
 
   {
-    "kind": 26431,
+    "kind": 26432,
     "pubkey": "<coordinator-pubkey>",
     "tags": [
       ["e", "<configuration-event-id>"],
       ["p", "<signer-pubkey>"]
     ],
-    "content": "<hex-encoded-commit>"
+    "content": "<hex-encoded-group-commit>"
   }
+
+  where <hex-encoded-group-commit> is given by the hex-encoded concatenation of
+    - [first-nonce]: 33-bytes (compressed)
+    - [second-nonce]: 33-bytes (compressed)
 
 8. then _coordinator_ sends the event that is to be signed to all signers in a `kind:26432` event, in the form:
 
   {
-    "kind": 26432,
+    "kind": 26433,
     "pubkey": "<coordinator-pubkey>",
     "tags": [
       ["e", "<configuration-event-id>"],
@@ -145,7 +149,7 @@ the signature algorithm is implemented roughly as described in the FROST paper, 
 9. finally, each _signer_ groups together all commits and uses these together with their secret nonces and the hash of the event to be signed to produce a `<partial-signature>` and sends that back to _coordinator_ in a `kind:26433` event, as follows:
 
   {
-    "kind": 26433,
+    "kind": 26434,
     "pubkey": "<signer-pubkey>",
     "tags": [
       ["e", "<configuration-event-id>"],

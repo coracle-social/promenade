@@ -12,6 +12,7 @@ const (
 	// signing flow events
 	KindConfiguration    = 26430 // coordinator to signer
 	KindCommit           = 26431 // signer to coordinator
-	KindEventToBeSigned  = 26432 // coordinator to signer
-	KindPartialSignature = 26433 // signer to coordinator
+	KindGroupCommit      = 26432 // coordinator to signer
+	KindEventToBeSigned  = 26433 // coordinator to signer
+	KindPartialSignature = 26434 // signer to coordinator
 )

@@ -23,7 +23,7 @@ func runSigner(ctx context.Context) {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	filter := nostr.Filter{
-		Kinds: []int{common.KindCommit, common.KindConfiguration, common.KindEventToBeSigned},
+		Kinds: []int{common.KindConfiguration, common.KindGroupCommit, common.KindEventToBeSigned},
 		Tags: nostr.TagMap{
 			"p": []string{ourPubkey},
 		},
@@ -114,9 +114,6 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	if err := cfg.DecodeHex(evt.Content); err != nil {
 		return fmt.Errorf("error decoding config: %w\n", err)
 	}
-	if err := cfg.Init(); err != nil {
-		return fmt.Errorf("error initializing config: %w", err)
-	}
 
 	res, _ := eventsdb.QuerySync(ctx, nostr.Filter{Authors: []string{cfg.PublicKey.X.String()}})
 	if len(res) == 0 {
@@ -151,6 +148,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 
 	// step-3 (receive): get commits from other signers and the message to be signed
 	var msg []byte
+	groupCommitment := frost.BinoncePublic{}
 	for {
 		evt := <-ch
 
@@ -164,24 +162,20 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 				return fmt.Errorf("event to be signed has a broken id")
 			}
 			msg, _ = hex.DecodeString(evtToSign.ID)
-		case common.KindCommit:
-			commit := frost.Commitment{}
-			if err := commit.DecodeHex(evt.Content); err != nil {
+		case common.KindGroupCommit:
+			if err := groupCommitment.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode received commitment: %w", err)
 			}
 
-			if commit.CommitmentID != ourCommitment.CommitmentID {
-				commitments = append(commitments, commit)
-			}
 		}
 
-		if len(msg) == 32 && len(commitments) == int(cfg.Threshold) {
+		if len(msg) == 32 && groupCommitment[0] != nil {
 			break
 		}
 	}
 
 	// step-4 (send): sign and shard our partial signature
-	partialSig, err := signer.Sign(msg, commitments)
+	partialSig, err := signer.Sign(msg, groupCommitment)
 	if err != nil {
 		panic(err)
 	}
