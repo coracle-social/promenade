@@ -26,12 +26,11 @@ export function trustedKeyDeal(
   pubkey: AffinePoint<bigint>
   commits: AffinePoint<bigint>[]
 } {
-  let pubkeyP = G.multiplyUnsafe(secret)
-  if ((pubkeyP.y & 1n) === 1n) {
+  let pubkey = G.multiplyUnsafe(secret).toAffine()
+  if ((pubkey.y & 1n) === 1n) {
     secret = secp256k1.CURVE.n - secret
-    pubkeyP = G.multiplyUnsafe(secret)
+    pubkey = G.multiplyUnsafe(secret).toAffine()
   }
-  const pubkey = pubkeyP.toAffine()
 
   if (threshold > maxSigners || threshold <= 0) {
     throw new Error('invalid number of signers or threshold')
