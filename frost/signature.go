@@ -29,18 +29,6 @@ func (c *Configuration) AggregateSignatures(
 	return schnorr.NewSignature(&finalNonce.X, z), nil
 }
 
-func (c *Configuration) validatePartialSignatureExtensive(partialSig PartialSignature) error {
-	if partialSig.Value == nil || partialSig.Value.IsZero() {
-		return errors.New("invalid signature shard (nil or zero scalar)")
-	}
-
-	if partialSig.SignerIdentifier == 0 || partialSig.SignerIdentifier > c.MaxSigners {
-		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
-	}
-
-	return nil
-}
-
 func (c *Configuration) VerifyPartialSignature(
 	pks PublicKeyShard,
 	commit BinoncePublic,
@@ -49,8 +37,12 @@ func (c *Configuration) VerifyPartialSignature(
 	partialSig PartialSignature,
 	message []byte,
 ) error {
-	if err := c.validatePartialSignatureExtensive(partialSig); err != nil {
-		return err
+	if partialSig.Value == nil || partialSig.Value.IsZero() {
+		return errors.New("invalid signature shard (nil or zero scalar)")
+	}
+
+	if partialSig.SignerIdentifier == 0 || partialSig.SignerIdentifier > c.MaxSigners {
+		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
 	}
 
 	challenge := chainhash.TaggedHash(chainhash.TagBIP0340Challenge,

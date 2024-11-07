@@ -33,7 +33,6 @@ func (c *Configuration) ComputeGroupCommitment(commitments []Commitment, message
 	groupCommitment BinoncePublic,
 	bindingCoefficient *btcec.ModNScalar,
 	finalNonce *btcec.JacobianPoint,
-	negate bool,
 ) {
 	// PreAgg(pk, {ρi}i∈S) -- from https://eprint.iacr.org/2023/899.pdf, page 15
 	// 2 : {(Di, Ei)}i∈S ← {ρi}i∈S
@@ -56,17 +55,19 @@ func (c *Configuration) ComputeGroupCommitment(commitments []Commitment, message
 	bindingCoefficient = computeBindingCoefficient(c.PublicKey, groupCommitment, message, c.Participants)
 
 	// 7 : R ← DEb
-	finalNonce, negate = bindFinalNonce(groupCommitment, bindingCoefficient)
+	finalNonce, negate := bindFinalNonce(groupCommitment, bindingCoefficient)
 
 	// BIP-340 special
 	if negate {
-		groupCommitment[0].Y.Negate(1)
-		groupCommitment[0].Y.Normalize()
-		groupCommitment[1].Y.Negate(1)
-		groupCommitment[1].Y.Normalize()
+		for i := range commitments {
+			commitments[i].BinoncePublic[0].X.Negate(1)
+			commitments[i].BinoncePublic[0].X.Normalize()
+			commitments[i].BinoncePublic[1].X.Negate(1)
+			commitments[i].BinoncePublic[1].X.Normalize()
+		}
 	}
 
-	return groupCommitment, bindingCoefficient, finalNonce, negate
+	return groupCommitment, bindingCoefficient, finalNonce
 }
 
 func (c *Configuration) ValidatePublicKeyShard(pks PublicKeyShard) error {

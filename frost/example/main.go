@@ -130,8 +130,7 @@ func coordinator(
 	}
 
 	// step-3 (send): send group commitment and message to all signers
-	message, _ := hex.DecodeString(messageHex)
-	groupCommitment, bindingCoefficient, finalNonce, _ := cfg.ComputeGroupCommitment(commitments, message)
+	groupCommitment, bindingCoefficient, finalNonce := cfg.ComputeGroupCommitment(commitments, message)
 
 	for s, ch := range signers {
 		select {
@@ -171,6 +170,7 @@ func coordinator(
 	// identify foul players if the signature is not good
 	if ok := signature.Verify(message, btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
 		for s, partialSig := range partialSigs {
+			// get specific pubkeyshard for this signer
 			idx := slices.IndexFunc(pubkeyShards, func(pks frost.PublicKeyShard) bool {
 				return pks.ID == partialSig.SignerIdentifier
 			})
@@ -179,9 +179,18 @@ func coordinator(
 			}
 			pubkeyShard := pubkeyShards[idx]
 
+			// get specific commit for this signer
+			idx = slices.IndexFunc(commitments, func(commit frost.Commitment) bool {
+				return commit.SignerID == partialSig.SignerIdentifier
+			})
+			if idx == -1 {
+				return nil, ParticipantError{cfg, s, "signature without a corresponding commit"}
+			}
+			commit := commitments[idx]
+
 			if err := cfg.VerifyPartialSignature(
 				pubkeyShard,
-				groupCommitment,
+				commit.BinoncePublic,
 				bindingCoefficient,
 				finalNonce,
 				partialSig,

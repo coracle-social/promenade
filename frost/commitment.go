@@ -97,6 +97,7 @@ func computeBindingCoefficient(
 	hash := chainhash.TaggedHash([]byte("frost/binding"), preimage)
 	s := new(btcec.ModNScalar)
 	s.SetBytes((*[32]byte)(hash))
+
 	return s
 }
 
