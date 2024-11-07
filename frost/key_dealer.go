@@ -8,15 +8,15 @@ func TrustedKeyDeal(
 	secret *btcec.ModNScalar,
 	threshold, maxSigners int,
 ) ([]KeyShard, *btcec.JacobianPoint, []*btcec.JacobianPoint) {
-	// negate this here before splitting the key if Y is odd because of bip-340
+	// BIP-340 special
 	pubkey := new(btcec.JacobianPoint)
 	btcec.ScalarBaseMultNonConst(secret, pubkey)
+	pubkey.ToAffine()
 	if pubkey.Y.IsOdd() {
 		secret.Negate()
 		btcec.ScalarBaseMultNonConst(secret, pubkey)
 	}
 	pubkey.ToAffine()
-	// ~
 
 	if maxSigners < threshold || threshold <= 0 {
 		panic("bad threshold")

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"slices"
@@ -25,12 +26,18 @@ func (pe ParticipantError) Error() string {
 }
 
 func main() {
+	message := make([]byte, 32)
+	secretKey := make([]byte, 32)
+
+	rand.Read(message)
+	rand.Read(secretKey)
+
 	flow(
 		context.Background(),
 		4,
 		7,
-		"443db1f4d0e6761a4f43809cc04e21aed1e206317589c24032d366646e48c5fe",
-		"7e62203358f05b0f00ccec238491775f2ac3fcceb1697f1ecb40af9e2c9a04cf",
+		message,
+		secretKey,
 	)
 }
 
@@ -38,15 +45,11 @@ func flow(
 	ctx context.Context,
 	threshold int,
 	totalSigners int,
-	messageHex string,
-	secretKey string,
+	message []byte,
+	secretKey []byte,
 ) {
 	secret := new(btcec.ModNScalar)
-	if s, err := hex.DecodeString(secretKey); err != nil {
-		panic(err)
-	} else {
-		secret.SetByteSlice(s)
-	}
+	secret.SetByteSlice(secretKey)
 
 	shards, pubkey, _ := frost.TrustedKeyDeal(secret, threshold, totalSigners)
 
@@ -80,11 +83,11 @@ func flow(
 		Participants: participants,
 	}
 
-	fmt.Println("message:", messageHex)
+	fmt.Println("message:", hex.EncodeToString(message))
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	sig, err := coordinator(ctx, cfg, pubkeyShards, signers, messageHex)
+	sig, err := coordinator(ctx, cfg, pubkeyShards, signers, message)
 	if err != nil {
 		panic(err)
 	}
@@ -92,7 +95,6 @@ func flow(
 	fmt.Println("signature:", hex.EncodeToString(sig))
 
 	sigp, _ := schnorr.ParseSignature(sig)
-	message, _ := hex.DecodeString(messageHex)
 	pk, _ := schnorr.ParsePubKey(pubkey.X.Bytes()[:])
 	fmt.Println("valid:", sigp.Verify(message, pk))
 }
@@ -102,7 +104,7 @@ func coordinator(
 	cfg *frost.Configuration,
 	pubkeyShards []frost.PublicKeyShard,
 	signers []chan string,
-	messageHex string,
+	message []byte,
 ) ([]byte, error) {
 	// step-1 (send): initialize each participant
 	cfgHex := cfg.Hex()
@@ -142,7 +144,7 @@ func coordinator(
 		select {
 		case <-ctx.Done():
 			return nil, ParticipantError{cfg, s, "timeout sending message"}
-		case ch <- messageHex:
+		case ch <- hex.EncodeToString(message):
 		}
 	}
 
