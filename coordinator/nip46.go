@@ -12,7 +12,10 @@ import (
 
 var nip46Signer = nip46.NewDynamicSigner(
 	func(handlerPubkey string) (string, error) {
-		res, err := eventsdb.QuerySync(context.TODO(), nostr.Filter{
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+
+		res, err := eventsdb.QuerySync(ctx, nostr.Filter{
 			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
 		})
 		if err != nil {
@@ -26,7 +29,10 @@ var nip46Signer = nip46.NewDynamicSigner(
 		return (*handlerSecret)[1], nil
 	},
 	func(handlerPubkey string) (nostr.Keyer, error) {
-		res, err := eventsdb.QuerySync(context.TODO(), nostr.Filter{
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+
+		res, err := eventsdb.QuerySync(ctx, nostr.Filter{
 			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
 		})
 		if err != nil {

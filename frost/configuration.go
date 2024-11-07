@@ -10,46 +10,63 @@ import (
 )
 
 type Configuration struct {
-	PublicKey             *btcec.JacobianPoint
-	SignerPublicKeyShards []PublicKeyShard
-	Threshold             int
-	MaxSigners            int
-
-	initialized bool
-}
-
-// Init verifies whether the configuration's components are valid, in which case it initializes internal values, or
-// returns an error otherwise.
-func (c *Configuration) Init() error {
-	if err := c.verifyConfiguration(); err != nil {
-		return fmt.Errorf("error verifying configuration: %w", err)
-	}
-
-	if err := c.verifySignerPublicKeyShards(); err != nil {
-		return fmt.Errorf("error verifying public key shards: %w", err)
-	}
-
-	c.initialized = true
-
-	return nil
+	PublicKey    *btcec.JacobianPoint
+	Threshold    int
+	MaxSigners   int
+	Participants []int
 }
 
 // Signer returns a new participant of the protocol instantiated from the Configuration and the signer's key shard.
 func (c *Configuration) Signer(keyshard KeyShard) (*Signer, error) {
-	if !c.initialized {
-		return nil, fmt.Errorf("configuration must be initialized")
-	}
-
 	if err := c.ValidateKeyShard(keyshard); err != nil {
 		return nil, err
 	}
 
 	return &Signer{
-		LambdaRegistry:   make(LambdaRegistry),
-		KeyShard:         keyshard,
-		NonceCommitments: make(map[uint64]Nonce),
-		Configuration:    c,
+		LambdaRegistry: make(LambdaRegistry),
+		KeyShard:       keyshard,
+		Configuration:  c,
 	}, nil
+}
+
+func (c *Configuration) ComputeGroupCommitment(commitments []Commitment, message []byte) (
+	groupCommitment BinoncePublic,
+	bindingCoefficient *btcec.ModNScalar,
+	finalNonce *btcec.JacobianPoint,
+	negate bool,
+) {
+	// PreAgg(pk, {ρi}i∈S) -- from https://eprint.iacr.org/2023/899.pdf, page 15
+	// 2 : {(Di, Ei)}i∈S ← {ρi}i∈S
+	// 3 : D ← ∏i∈S Di
+	// 4 : E ← ∏i∈S Ei
+	// 5 : ρ ← (D, E)
+	groupCommitment = BinoncePublic{
+		new(btcec.JacobianPoint),
+		new(btcec.JacobianPoint),
+	}
+	for _, com := range commitments {
+		btcec.AddNonConst(groupCommitment[0], com.BinoncePublic[0], groupCommitment[0])
+		btcec.AddNonConst(groupCommitment[1], com.BinoncePublic[1], groupCommitment[1])
+	}
+	groupCommitment[0].ToAffine()
+	groupCommitment[1].ToAffine()
+
+	// SignRound(ski, pk, S, statei, ρ, m) -- from https://eprint.iacr.org/2023/899.pdf, page 15
+	// 6 : b ← Hnon(X, S, ρ, m)
+	bindingCoefficient = computeBindingCoefficient(c.PublicKey, groupCommitment, message, c.Participants)
+
+	// 7 : R ← DEb
+	finalNonce, negate = bindFinalNonce(groupCommitment, bindingCoefficient)
+
+	// BIP-340 special
+	if negate {
+		groupCommitment[0].Y.Negate(1)
+		groupCommitment[0].Y.Normalize()
+		groupCommitment[1].Y.Negate(1)
+		groupCommitment[1].Y.Normalize()
+	}
+
+	return groupCommitment, bindingCoefficient, finalNonce, negate
 }
 
 func (c *Configuration) ValidatePublicKeyShard(pks PublicKeyShard) error {
@@ -69,10 +86,6 @@ func (c *Configuration) ValidatePublicKeyShard(pks PublicKeyShard) error {
 }
 
 func (c *Configuration) ValidateKeyShard(keyshard KeyShard) error {
-	if !c.initialized {
-		return fmt.Errorf("configuration must be initialized")
-	}
-
 	if err := c.ValidatePublicKeyShard(keyshard.PublicKeyShard); err != nil {
 		return err
 	}
@@ -106,45 +119,6 @@ func (c *Configuration) ValidateKeyShard(keyshard KeyShard) error {
 	return nil
 }
 
-func (c *Configuration) verifySignerPublicKeyShards() error {
-	length := len(c.SignerPublicKeyShards)
-	if length < c.Threshold || length > c.MaxSigners {
-		return fmt.Errorf("number of public key shards (%d) is smaller than threshold (%d) or bigger than max (%d)",
-			length, c.Threshold, c.MaxSigners)
-	}
-
-	for p, pks := range c.SignerPublicKeyShards {
-		if err := c.ValidatePublicKeyShard(pks); err != nil {
-			return fmt.Errorf("error validating public key shards: %w", err)
-		}
-
-		// verify whether the ID or public key have duplicates
-		for _, prev := range c.SignerPublicKeyShards[0:p] {
-			if prev.ID == pks.ID {
-				return fmt.Errorf("found duplicate identifier for signer %d", pks.ID)
-			}
-			if prev.PublicKey.X.Equals(&pks.PublicKey.X) || prev.PublicKey.Y.Equals(&pks.PublicKey.Y) {
-				return fmt.Errorf("found duplicate public keys for signers %d and %d", pks.ID, prev.ID)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (c *Configuration) verifyConfiguration() error {
-	if c.Threshold == 0 || c.Threshold > c.MaxSigners {
-		return fmt.Errorf("threshold (%d) must be positive and smaller than max signers (%d)",
-			c.Threshold, c.MaxSigners)
-	}
-
-	if err := c.validatePoint(c.PublicKey); err != nil {
-		return fmt.Errorf("invalid group public key: %w", err)
-	}
-
-	return nil
-}
-
 func (c *Configuration) validatePoint(pt *btcec.JacobianPoint) error {
 	if pt == nil {
 		return fmt.Errorf("public key can't be nil")
@@ -173,16 +147,16 @@ func (c *Configuration) DecodeHex(x string) error {
 }
 
 func (c *Configuration) Encode() []byte {
-	out := make([]byte, 6+33, 6+33+len(c.SignerPublicKeyShards)*(6+33+33*c.Threshold))
+	out := make([]byte, 6+33+len(c.Participants)*2)
 
 	binary.LittleEndian.PutUint16(out[0:2], uint16(c.Threshold))
 	binary.LittleEndian.PutUint16(out[2:4], uint16(c.MaxSigners))
-	binary.LittleEndian.PutUint16(out[4:6], uint16(len(c.SignerPublicKeyShards)))
+	binary.LittleEndian.PutUint16(out[4:6], uint16(len(c.Participants)))
 
-	writePointTo(out[6:], c.PublicKey)
+	writePointTo(out[6:6+33], c.PublicKey)
 
-	for _, pks := range c.SignerPublicKeyShards {
-		out = append(out, pks.Encode()...)
+	for i, part := range c.Participants {
+		binary.BigEndian.PutUint16(out[6+33+i*2:], uint16(part))
 	}
 
 	return out
@@ -195,7 +169,7 @@ func (c *Configuration) Decode(in []byte) error {
 
 	c.Threshold = int(binary.LittleEndian.Uint16(in[0:2]))
 	c.MaxSigners = int(binary.LittleEndian.Uint16(in[2:4]))
-	c.SignerPublicKeyShards = make([]PublicKeyShard, binary.LittleEndian.Uint16(in[4:6]))
+	c.Participants = make([]int, binary.LittleEndian.Uint16(in[4:6]))
 
 	if pk, err := secp256k1.ParsePubKey(in[6 : 6+33]); err != nil {
 		return fmt.Errorf("failed to decode pubkey: %w", err)
@@ -204,14 +178,8 @@ func (c *Configuration) Decode(in []byte) error {
 		pk.AsJacobian(c.PublicKey)
 	}
 
-	curr := 6 + 33
-	for i := range c.SignerPublicKeyShards {
-		n, err := c.SignerPublicKeyShards[i].Decode(in[curr:])
-		if err != nil {
-			return fmt.Errorf("failed to decode pubkey shard %d: %w", i, err)
-		}
-
-		curr += n
+	for i := range c.Participants {
+		c.Participants[i] = int(binary.BigEndian.Uint16(in[6+33+i*2 : 6+33+(i+1)*2]))
 	}
 
 	return nil

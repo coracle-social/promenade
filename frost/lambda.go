@@ -1,9 +1,8 @@
 package frost
 
 import (
-	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 )
@@ -13,18 +12,19 @@ import (
 // - id is non-nil and != 0.
 // - every scalar in participants is non-nil and != 0.
 // - there are no duplicates in participants.
-func ComputeLambda(id int, participants []*btcec.ModNScalar) *btcec.ModNScalar {
+func ComputeLambda(id int, participants []int) *btcec.ModNScalar {
 	sid := new(btcec.ModNScalar).SetInt(uint32(id))
 	numerator := new(btcec.ModNScalar).SetInt(1)
 	denominator := new(btcec.ModNScalar).SetInt(1)
 
-	for _, participant := range participants {
-		if participant.Equals(sid) {
+	for _, part := range participants {
+		if part == id {
 			continue
 		}
 
-		numerator.Mul(participant)
-		denominator.Mul(new(btcec.ModNScalar).Set(participant).Add(new(btcec.ModNScalar).NegateVal(sid)))
+		spart := new(btcec.ModNScalar).SetInt(uint32(part))
+		numerator.Mul(spart)
+		denominator.Mul(new(btcec.ModNScalar).Set(spart).Add(new(btcec.ModNScalar).NegateVal(sid)))
 	}
 
 	return numerator.Mul(denominator.InverseNonConst())
@@ -42,12 +42,12 @@ type lambdaShadow Lambda
 // to. A sorted set of participants will yield the same Lambda.
 type LambdaRegistry map[string]*Lambda
 
-const lambdaRegistryKeyDomainSeparator = "FROST-participants"
-
 func lambdaRegistryKey(participants []int) string {
-	a := fmt.Sprint(lambdaRegistryKeyDomainSeparator, participants)
-	k := sha256.Sum256([]byte(a))
-	return hex.EncodeToString(k[:]) // Length = 32 bytes, 64 in hex string
+	key := make([]byte, 2*len(participants))
+	for i, part := range participants {
+		binary.BigEndian.PutUint16(key[2*i:], uint16(part))
+	}
+	return string(key)
 }
 
 // New creates a new Lambda and for the participant list for the participant id, and registers it.
@@ -56,12 +56,8 @@ func lambdaRegistryKey(participants []int) string {
 // - every participant id is != 0.
 // - there are no duplicates in participants.
 func (l LambdaRegistry) New(id int, participants []int) *btcec.ModNScalar {
-	polynomial := makePolynomialFromListFunc(participants, func(p int) *btcec.ModNScalar {
-		return new(btcec.ModNScalar).SetInt(uint32(p))
-	})
-	lambda := ComputeLambda(id, polynomial)
+	lambda := ComputeLambda(id, participants)
 	l.Set(participants, lambda)
-
 	return lambda
 }
 
@@ -83,7 +79,7 @@ func (l LambdaRegistry) Get(participants []int) *btcec.ModNScalar {
 // - id is non-nil and != 0.
 // - every scalar in participants is non-nil and != 0.
 // - there are no duplicates in participants.
-func (l LambdaRegistry) GetOrNew(id int, participants []int) *btcec.ModNScalar {
+func (l LambdaRegistry) GetOrNew(participants []int, id int) *btcec.ModNScalar {
 	lambda := l.Get(participants)
 	if lambda == nil {
 		return l.New(id, participants)

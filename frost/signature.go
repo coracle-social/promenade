@@ -1,112 +1,36 @@
 package frost
 
 import (
-	"cmp"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
-// AggregateSignatures enables a coordinator to produce the final signature given all signature shards.
-//
-// Before aggregation, each signature shard must be a valid, deserialized element. If that validation fails the
-// coordinator must abort the protocol, as the resulting signature will be invalid.
-// The CommitmentList must be sorted in ascending order by identifier.
-//
-// The coordinator should verify this signature using the group public key before publishing or releasing the signature.
-// This aggregate signature will verify if and only if all signature shards are valid. If an invalid shard is identified
-// a reasonable approach is to remove the signer from the set of allowed participants in future runs of FROST. If verify
-// is set to true, AggregateSignatures will automatically verify the signature shards, and will return an error on the
-// first encountered invalid signature shard.
 func (c *Configuration) AggregateSignatures(
-	message []byte,
+	finalNonce *btcec.JacobianPoint,
 	partialSigs []PartialSignature,
-	commitments []Commitment,
 ) (*schnorr.Signature, error) {
-	if !c.initialized {
-		return nil, fmt.Errorf("configuration must be initialized")
-	}
+	// SignAgg(pk, ρ, {σi}i∈S, m) -- https://eprint.iacr.org/2023/899.pdf, page 15
 
-	groupCommitment, _, _, err := c.preparePartialSignatureVerification(message, commitments)
-	if err != nil {
-		return nil, err
-	}
-
-	signature, err := c.sumShards(partialSigs, groupCommitment)
-	if err != nil {
-		return nil, err
-	}
-
-	return signature, nil
-}
-
-func (c *Configuration) sumShards(shards []PartialSignature, groupCommitment *btcec.JacobianPoint) (*schnorr.Signature, error) {
+	// 5 : s ′ ← ∑∈S σi
 	z := new(btcec.ModNScalar)
-
-	for _, partialSig := range shards {
-		if partialSig.PartialSignature == nil || partialSig.PartialSignature.IsZero() {
+	for _, partialSig := range partialSigs {
+		if partialSig.Value == nil || partialSig.Value.IsZero() {
 			return nil, errors.New("invalid signature shard (nil or zero scalar)")
 		}
-
-		z.Add(partialSig.PartialSignature)
+		z.Add(partialSig.Value)
 	}
 
-	return schnorr.NewSignature(&groupCommitment.X, z), nil
-}
-
-// VerifyPartialSignature verifies a signature shard. partialSig is the signer's signature shard to be verified.
-//
-// The CommitmentList must be sorted in ascending order by identifier.
-func (c *Configuration) VerifyPartialSignature(
-	partialSig PartialSignature,
-	message []byte,
-	commitments []Commitment,
-) error {
-	if !c.initialized {
-		return fmt.Errorf("configuration must be initialized")
-	}
-
-	groupCommitment, bindingFactors, participants, err := c.preparePartialSignatureVerification(message, commitments)
-	if err != nil {
-		return err
-	}
-
-	return c.verifyPartialSignature(partialSig, message, commitments, participants, groupCommitment, bindingFactors)
-}
-
-func (c *Configuration) preparePartialSignatureVerification(message []byte, commitments []Commitment) (
-	groupCommit *btcec.JacobianPoint,
-	bindingFactors map[int]*btcec.ModNScalar,
-	participants []*btcec.ModNScalar,
-	err error,
-) {
-	slices.SortFunc(commitments, func(a, b Commitment) int { return cmp.Compare(a.SignerID, b.SignerID) })
-
-	// Validate general consistency of the commitment list.
-	if err := c.ValidateCommitmentList(commitments); err != nil {
-		return nil, nil, nil, fmt.Errorf("invalid list of commitments: %w", err)
-	}
-
-	bindingFactors = commitmentsBindingFactors(commitments, c.PublicKey, message)
-	groupCommit = groupCommitment(commitments, bindingFactors)
-
-	participants = makePolynomialFromListFunc(commitments, func(c Commitment) *btcec.ModNScalar {
-		s := new(btcec.ModNScalar)
-		s.SetInt(uint32(c.SignerID))
-		return s
-	})
-
-	return groupCommit, bindingFactors, participants, nil
+	return schnorr.NewSignature(&finalNonce.X, z), nil
 }
 
 func (c *Configuration) validatePartialSignatureExtensive(partialSig PartialSignature) error {
-	if partialSig.PartialSignature == nil || partialSig.PartialSignature.IsZero() {
+	if partialSig.Value == nil || partialSig.Value.IsZero() {
 		return errors.New("invalid signature shard (nil or zero scalar)")
 	}
 
@@ -114,65 +38,67 @@ func (c *Configuration) validatePartialSignatureExtensive(partialSig PartialSign
 		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
 	}
 
-	idx := slices.IndexFunc(c.SignerPublicKeyShards, func(pks PublicKeyShard) bool { return pks.ID == partialSig.SignerIdentifier })
-	if idx == -1 {
-		return fmt.Errorf("no public key registered for signer %d", partialSig.SignerIdentifier)
-	}
-
 	return nil
 }
 
-func (c *Configuration) verifyPartialSignature(
+func (c *Configuration) VerifyPartialSignature(
+	pks PublicKeyShard,
+	commit BinoncePublic,
+	bindingCoefficient *btcec.ModNScalar,
+	finalNonce *btcec.JacobianPoint,
 	partialSig PartialSignature,
 	message []byte,
-	commitments []Commitment,
-	participants []*btcec.ModNScalar,
-	groupCommitment *btcec.JacobianPoint,
-	bindingFactors map[int]*btcec.ModNScalar,
 ) error {
 	if err := c.validatePartialSignatureExtensive(partialSig); err != nil {
 		return err
 	}
 
-	idx := slices.IndexFunc(commitments, func(commit Commitment) bool { return commit.SignerID == partialSig.SignerIdentifier })
-	if idx == -1 {
-		return fmt.Errorf("commitment for signer %d is missing", partialSig.SignerIdentifier)
-	}
-	commit := commitments[idx]
-
-	pkidx := slices.IndexFunc(c.SignerPublicKeyShards, func(pks PublicKeyShard) bool { return pks.ID == partialSig.SignerIdentifier })
-	pk := c.SignerPublicKeyShards[pkidx].PublicKey
-
-	lambda := ComputeLambda(partialSig.SignerIdentifier, participants)
 	challenge := chainhash.TaggedHash(chainhash.TagBIP0340Challenge,
-		groupCommitment.X.Bytes()[:],
+		finalNonce.X.Bytes()[:],
 		c.PublicKey.X.Bytes()[:],
 		message,
 	)
 	challengeScalar := new(btcec.ModNScalar)
 	challengeScalar.SetBytes((*[32]byte)(challenge))
-	lambdaChall := new(btcec.ModNScalar).Mul2(lambda, challengeScalar)
 
-	// commitment KeyShard: r = g(h + b*f + l*s)
-	bindingFactor := bindingFactors[partialSig.SignerIdentifier]
-	// commShard := commit.HidingNonceCommitment.Copy().Add(commit.BindingNonceCommitment.Copy().Multiply(bindingFactor))
+	// copied from https://github.com/LLFourn/secp256kfun/blob/8e6fd712717692d475287f4a964be57c8584f54e/schnorr_fun/src/frost/session.rs#L93
+	// R1, R2 = nonces
+	// b = bindingCoefficient
+	// c = challenge
+	// lambda = lambda
+	// X = pks.PublicKey
+	// s = partialSig.Value
+	// G = base
+	//
+	// R1 + b * R2 + (c * lambda) * X - s * G
 
-	bncbf := new(btcec.JacobianPoint)
-	btcec.ScalarMultNonConst(bindingFactor, commit.BindingNonceCommitment, bncbf)
+	// (c * lambda)
+	first := ComputeLambda(partialSig.SignerIdentifier, c.Participants)
+	first.Mul(challengeScalar)
 
-	commShard := new(btcec.JacobianPoint)
-	btcec.AddNonConst(bncbf, commit.HidingNonceCommitment, commShard)
+	// b * R2
+	second := new(btcec.JacobianPoint)
+	btcec.ScalarMultNonConst(bindingCoefficient, commit[1], second)
 
-	r := new(btcec.JacobianPoint)
-	btcec.ScalarMultNonConst(lambdaChall, pk, r)
-	btcec.AddNonConst(r, commShard, r)
-	r.ToAffine()
+	// R1 + b * R2
+	third := new(btcec.JacobianPoint)
+	btcec.AddNonConst(second, commit[0], third)
 
-	l := new(btcec.JacobianPoint)
-	btcec.ScalarBaseMultNonConst(partialSig.PartialSignature, l)
-	l.ToAffine()
+	// (c * lambda) * X
+	fourth := new(btcec.JacobianPoint)
+	btcec.ScalarMultNonConst(first, pks.PublicKey, fourth)
 
-	if !l.X.Equals(&r.X) || !l.Y.Equals(&r.Y) {
+	// b * R2 + (c * lambda) * X
+	btcec.AddNonConst(fourth, second, fourth)
+	fourth.ToAffine()
+
+	// s * G
+	fifth := new(btcec.JacobianPoint)
+	btcec.ScalarBaseMultNonConst(partialSig.Value, fifth)
+	fifth.ToAffine()
+
+	// R1 + b * R2 + (c * lambda) * X == s * G
+	if !fourth.X.Equals(&fifth.X) || !fourth.Y.Equals(&fifth.Y) {
 		return fmt.Errorf("invalid signature shard for signer %d", partialSig.SignerIdentifier)
 	}
 
@@ -180,7 +106,7 @@ func (c *Configuration) verifyPartialSignature(
 }
 
 type PartialSignature struct {
-	PartialSignature *btcec.ModNScalar
+	Value            *btcec.ModNScalar
 	SignerIdentifier int
 }
 
@@ -188,7 +114,7 @@ func (s *PartialSignature) Encode() []byte {
 	out := make([]byte, 2+32)
 
 	binary.LittleEndian.PutUint16(out[0:2], uint16(s.SignerIdentifier))
-	s.PartialSignature.PutBytesUnchecked(out[2:])
+	s.Value.PutBytesUnchecked(out[2 : 2+32])
 
 	return out
 }
@@ -200,8 +126,8 @@ func (s *PartialSignature) Decode(in []byte) error {
 
 	s.SignerIdentifier = int(binary.LittleEndian.Uint16(in[0:2]))
 
-	s.PartialSignature = new(btcec.ModNScalar)
-	s.PartialSignature.SetBytes((*[32]byte)(in[2 : 2+32]))
+	s.Value = new(btcec.ModNScalar)
+	s.Value.SetBytes((*[32]byte)(in[2 : 2+32]))
 
 	return nil
 }

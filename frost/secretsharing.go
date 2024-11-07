@@ -32,15 +32,6 @@ func makePolynomial(secret *btcec.ModNScalar, threshold int) (Polynomial, error)
 	return p, nil
 }
 
-// makePolynomialFromListFunc returns a Polynomial from the scalar returned by f applied on each element of the slice
-func makePolynomialFromListFunc[S ~[]E, E any](s S, f func(E) *btcec.ModNScalar) Polynomial {
-	polynomial := make(Polynomial, len(s))
-	for i, v := range s {
-		polynomial[i] = new(btcec.ModNScalar).Set(f(v))
-	}
-	return polynomial
-}
-
 func makeKeyShard(id int, p Polynomial, pubkey *btcec.JacobianPoint) KeyShard {
 	sid := new(btcec.ModNScalar).SetInt(uint32(id))
 	yi := p.evaluate(sid)

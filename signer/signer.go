@@ -139,7 +139,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	}
 
 	// step-2 (send): send our pre-commit to coordinator
-	ourCommitment := signer.Commit()
+	ourCommitment := signer.Commit(sessionId)
 	commitments := make([]frost.Commitment, 0, cfg.Threshold)
 	commitments = append(commitments, ourCommitment)
 	sendToCoordinator(&nostr.Event{

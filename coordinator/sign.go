@@ -166,7 +166,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	}
 
 	// aggregate signature
-	sig, err := cfg.AggregateSignatures(msg[:], partialSigs, commitments)
+	sig, err := cfg.AggregateSignatures(, partialSigs)
 	if err != nil {
 		return fmt.Errorf("failed to aggregate signatures: %w", err)
 	}

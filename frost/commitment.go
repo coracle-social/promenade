@@ -5,18 +5,18 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"slices"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 )
 
-// Commitment is a participant's one-time commitment holding its identifier, and hiding and binding nonces.
+type BinoncePublic [2]*btcec.JacobianPoint // (D, E)
+
+type BinonceSecret [2]*btcec.ModNScalar // (d, e)
+
 type Commitment struct {
-	HidingNonceCommitment  *btcec.JacobianPoint
-	BindingNonceCommitment *btcec.JacobianPoint
-	CommitmentID           uint64
-	SignerID               int
+	BinoncePublic
+	SignerID int
 }
 
 // ValidateCommitmentList returns an error if at least one of the following conditions is not met:
@@ -26,10 +26,6 @@ type Commitment struct {
 // - no duplicated in signer identifiers.
 // - all commitment signer identifiers are registered in the configuration.
 func (c *Configuration) ValidateCommitmentList(commitments []Commitment) error {
-	if !c.initialized {
-		return fmt.Errorf("configuration must be initialized")
-	}
-
 	if length := len(commitments); length < c.Threshold || length > c.MaxSigners {
 		return fmt.Errorf("invalid number of commitments: %d (needs at least %d and at most %d)",
 			length, c.Threshold, c.MaxSigners)
@@ -59,72 +55,49 @@ func (c *Configuration) ValidateCommitmentList(commitments []Commitment) error {
 }
 
 func (c *Configuration) ValidateCommitment(commitment Commitment) error {
-	if !c.initialized {
-		return fmt.Errorf("configuration must be initialized")
-	}
-
 	if commitment.SignerID == 0 || commitment.SignerID > c.MaxSigners {
 		return fmt.Errorf("identifier can't be zero or bigger than the max number of signers")
 	}
 
-	if err := c.validatePoint(commitment.HidingNonceCommitment); err != nil {
+	if err := c.validatePoint(commitment.BinoncePublic[0]); err != nil {
 		return fmt.Errorf(
-			"invalid commitment %d for signer %d, the hiding nonce commitment %w",
-			commitment.CommitmentID,
+			"invalid commitment for signer %d, the hiding nonce commitment %w",
 			commitment.SignerID,
 			err,
 		)
 	}
 
-	if err := c.validatePoint(commitment.BindingNonceCommitment); err != nil {
+	if err := c.validatePoint(commitment.BinoncePublic[1]); err != nil {
 		return fmt.Errorf(
-			"invalid commitment %d for signer %d, the binding nonce commitment %w",
-			commitment.CommitmentID,
+			"invalid commitment for signer %d, the binding nonce commitment %w",
 			commitment.SignerID,
 			err,
-		)
-	}
-
-	// validate that the commitment comes from a registered signer.
-	if !slices.ContainsFunc(c.SignerPublicKeyShards, func(s PublicKeyShard) bool { return s.ID == commitment.SignerID }) {
-		return fmt.Errorf(
-			"signer identifier %d for commitment %d is not registered in the configuration",
-			commitment.SignerID,
-			commitment.CommitmentID,
 		)
 	}
 
 	return nil
 }
 
-func commitmentsBindingFactors(
-	commitments []Commitment,
+func computeBindingCoefficient(
 	publicKey *btcec.JacobianPoint,
+	aggNonce BinoncePublic,
 	message []byte,
-) map[int]*btcec.ModNScalar {
-	coms := commitmentsWithEncodedID(commitments)
+	participants []int,
+) *btcec.ModNScalar {
+	preimage := make([]byte, 32+4+32*len(participants)+33+len(message))
 
-	encodedCommitHash := chainhash.TaggedHash([]byte("FROST/bf1"), encodeCommitmentList(coms))
-	h := chainhash.TaggedHash([]byte("FROST/bf2"), message)
-
-	rhoInputPrefix := make([]byte, 33+32+32)
-
-	writePointTo(rhoInputPrefix[0:33], publicKey)
-	copy(rhoInputPrefix[33:], h[:])
-	copy(rhoInputPrefix[33+32:], encodedCommitHash[:])
-
-	bindingFactors := make(map[int]*btcec.ModNScalar, len(commitments))
-
-	pre := ""
-	for _, com := range coms {
-		pre += "  "
-		hash := chainhash.TaggedHash([]byte("FROST/rho"), rhoInputPrefix, com.ParticipantID[:])
-		bf := new(btcec.ModNScalar)
-		bf.SetBytes((*[32]byte)(hash))
-		bindingFactors[com.Commitment.SignerID] = bf
+	publicKey.X.PutBytesUnchecked(preimage[0:32])
+	binary.BigEndian.PutUint32(preimage[32:32+4], uint32(len(participants)))
+	for i, part := range participants {
+		new(btcec.ModNScalar).SetInt(uint32(part)).PutBytesUnchecked(preimage[32+4+i*32 : 32+4+(i+1)*32])
 	}
+	writePointTo(preimage[32+4+len(participants)*32+32:32+4+len(participants)*32+32+33], aggNonce[0])
+	copy(preimage[32+4+len(participants)*32+32+33:], message)
 
-	return bindingFactors
+	hash := chainhash.TaggedHash([]byte("frost/binding"), preimage)
+	s := new(btcec.ModNScalar)
+	s.SetBytes((*[32]byte)(hash))
+	return s
 }
 
 type commitmentWithEncodedID struct {
@@ -153,29 +126,72 @@ func encodeCommitmentList(commitments []commitmentWithEncodedID) []byte {
 
 		copy(encoded[base:], com.ParticipantID[:])
 
-		writePointTo(encoded[base+32:base+32+33], com.HidingNonceCommitment)
-		writePointTo(encoded[base+32+33:base+32+33+33], com.BindingNonceCommitment)
+		writePointTo(encoded[base+32:base+32+33], com.BinoncePublic[0])
+		writePointTo(encoded[base+32+33:base+32+33+33], com.BinoncePublic[1])
 	}
 
 	return encoded
 }
 
-func groupCommitment(commitments []Commitment, bindingFactors map[int]*btcec.ModNScalar) *btcec.JacobianPoint {
-	gc := new(btcec.JacobianPoint)
+func bindFinalNonce(
+	groupCommitment BinoncePublic,
+	bindingCoeff *btcec.ModNScalar,
+) (finalNonce *btcec.JacobianPoint, negate bool) {
+	finalNonce = new(btcec.JacobianPoint)
 
-	for _, com := range commitments {
-		factor := bindingFactors[com.SignerID]
+	btcec.ScalarMultNonConst(bindingCoeff, groupCommitment[1], finalNonce)
+	btcec.AddNonConst(finalNonce, groupCommitment[0], finalNonce)
+	finalNonce.ToAffine()
 
-		bindingNonce := new(btcec.JacobianPoint)
-		bindingNonce.Set(com.BindingNonceCommitment)
-		btcec.ScalarMultNonConst(factor, bindingNonce, bindingNonce)
-
-		btcec.AddNonConst(com.HidingNonceCommitment, gc, gc)
-		btcec.AddNonConst(bindingNonce, gc, gc)
+	if finalNonce.Y.IsOdd() {
+		finalNonce.Y.Negate(1)
+		finalNonce.Y.Normalize()
+		negate = true
 	}
 
-	gc.ToAffine()
-	return gc
+	return finalNonce, negate
+}
+
+func (c BinoncePublic) Hex() string { return hex.EncodeToString(c.Encode()) }
+func (c *BinoncePublic) DecodeHex(x string) error {
+	b, err := hex.DecodeString(x)
+	if err != nil {
+		return err
+	}
+	return c.Decode(b)
+}
+
+func (c BinoncePublic) Encode() []byte {
+	out := make([]byte, 33+33)
+	c.encodeTo(out)
+	return out
+}
+
+func (c BinoncePublic) encodeTo(out []byte) {
+	writePointTo(out[0:33], c[0])
+	writePointTo(out[33:33+33], c[1])
+}
+
+func (c *BinoncePublic) Decode(in []byte) error {
+	if len(in) < 33+33 {
+		return fmt.Errorf("too small")
+	}
+
+	if pt, err := btcec.ParsePubKey(in[0:33]); err != nil {
+		return fmt.Errorf("failed to decode binding nonce: %w", err)
+	} else {
+		c[0] = new(btcec.JacobianPoint)
+		pt.AsJacobian(c[0])
+	}
+
+	if pt, err := btcec.ParsePubKey(in[33 : 33+33]); err != nil {
+		return fmt.Errorf("failed to decode hiding nonce: %w", err)
+	} else {
+		c[1] = new(btcec.JacobianPoint)
+		pt.AsJacobian(c[1])
+	}
+
+	return nil
 }
 
 func (c Commitment) Hex() string { return hex.EncodeToString(c.Encode()) }
@@ -188,37 +204,24 @@ func (c *Commitment) DecodeHex(x string) error {
 }
 
 func (c Commitment) Encode() []byte {
-	out := make([]byte, 8+2+33+33)
+	out := make([]byte, 2+33+33)
 
-	binary.LittleEndian.PutUint64(out[0:8], c.CommitmentID)
-	binary.LittleEndian.PutUint16(out[8:8+2], uint16(c.SignerID))
+	binary.LittleEndian.PutUint16(out[0:2], uint16(c.SignerID))
 
-	writePointTo(out[8+2:8+2+33], c.BindingNonceCommitment)
-	writePointTo(out[8+2+33:8+2+33+33], c.HidingNonceCommitment)
+	c.BinoncePublic.encodeTo(out[2:])
 
 	return out
 }
 
 func (c *Commitment) Decode(in []byte) error {
-	if len(in) < 8+2+33+33 {
+	if len(in) < 2+33+33 {
 		return fmt.Errorf("too small")
 	}
 
-	c.CommitmentID = binary.LittleEndian.Uint64(in[0:8])
-	c.SignerID = int(binary.LittleEndian.Uint16(in[8 : 8+2]))
+	c.SignerID = int(binary.LittleEndian.Uint16(in[0:2]))
 
-	if pt, err := btcec.ParsePubKey(in[8+2 : 8+2+33]); err != nil {
-		return fmt.Errorf("failed to decode binding nonce: %w", err)
-	} else {
-		c.BindingNonceCommitment = new(btcec.JacobianPoint)
-		pt.AsJacobian(c.BindingNonceCommitment)
-	}
-
-	if pt, err := btcec.ParsePubKey(in[8+2+33 : 8+2+33+33]); err != nil {
-		return fmt.Errorf("failed to decode hiding nonce: %w", err)
-	} else {
-		c.HidingNonceCommitment = new(btcec.JacobianPoint)
-		pt.AsJacobian(c.HidingNonceCommitment)
+	if err := c.BinoncePublic.Decode(in[2:]); err != nil {
+		return err
 	}
 
 	return nil
