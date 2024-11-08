@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
@@ -20,6 +21,8 @@ var (
 	onlineSigners                = xsync.NewMapOf[string, int]()
 	groupContextsByHandlerPubKey = xsync.NewMapOf[string, *GroupContext]()
 	signingSessions              = xsync.NewMapOf[string, Session]()
+	lambdaRegistry               = make(frost.LambdaRegistry)
+	lambdaRegistryLock           = sync.Mutex{}
 )
 
 type GroupContext struct {
@@ -168,6 +171,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 				return fmt.Errorf("failed to decode partial signature from %s", evt.PubKey)
 			}
 
+			lambdaRegistryLock.Lock()
 			if err := cfg.VerifyPartialSignature(
 				chosenSigners[evt.PubKey].Shard,
 				commitments[evt.PubKey].BinoncePublic,
@@ -175,9 +179,12 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 				finalNonce,
 				partialSig,
 				msg[:],
+				lambdaRegistry,
 			); err != nil {
+				lambdaRegistryLock.Unlock()
 				return fmt.Errorf("partial signature from %s isn't good: %w", evt.PubKey, err)
 			}
+			lambdaRegistryLock.Unlock()
 
 			partialSigs[i] = partialSig
 			i++

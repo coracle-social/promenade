@@ -19,6 +19,8 @@ import (
 // signing sessions are indexed by the id of the first event that triggered them
 var sessions = xsync.NewMapOf[string, chan *nostr.Event]()
 
+var lambdaRegistry = make(frost.LambdaRegistry)
+
 func runSigner(ctx context.Context) {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
@@ -67,6 +69,7 @@ func runSigner(ctx context.Context) {
 	fmt.Fprintf(os.Stderr, "[signer] started waiting for sign requests from %d key groups\n", ngroups)
 	for ie := range mainEventStream {
 		evt := ie.Event
+
 		switch evt.Kind {
 		case common.KindConfiguration:
 			ch := make(chan *nostr.Event)
@@ -130,7 +133,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		return fmt.Errorf("failed to decode our shard: %w", err)
 	}
 
-	signer, err := cfg.Signer(shard)
+	signer, err := cfg.Signer(shard, lambdaRegistry)
 	if err != nil {
 		panic(err)
 	}
@@ -151,7 +154,6 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	groupCommitment := frost.BinoncePublic{}
 	for {
 		evt := <-ch
-
 		switch evt.Kind {
 		case common.KindEventToBeSigned:
 			var evtToSign nostr.Event
@@ -166,7 +168,6 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 			if err := groupCommitment.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode received commitment: %w", err)
 			}
-
 		}
 
 		if len(msg) == 32 && groupCommitment[0] != nil {
