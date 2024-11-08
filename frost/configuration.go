@@ -60,10 +60,10 @@ func (c *Configuration) ComputeGroupCommitment(commitments []Commitment, message
 	// BIP-340 special
 	if negate {
 		for i := range commitments {
-			commitments[i].BinoncePublic[0].X.Negate(1)
-			commitments[i].BinoncePublic[0].X.Normalize()
-			commitments[i].BinoncePublic[1].X.Negate(1)
-			commitments[i].BinoncePublic[1].X.Normalize()
+			commitments[i].BinoncePublic[0].Y.Negate(1)
+			commitments[i].BinoncePublic[0].Y.Normalize()
+			commitments[i].BinoncePublic[1].Y.Negate(1)
+			commitments[i].BinoncePublic[1].Y.Normalize()
 		}
 	}
 
