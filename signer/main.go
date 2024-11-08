@@ -9,12 +9,14 @@ import (
 	"github.com/fiatjaf/eventstore/badger"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/keyer"
+	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v3"
 )
 
 var (
 	kr       nostr.Keyer
 	dir      string
+	log      = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
 	pool     *nostr.SimplePool
 	eventsdb eventstore.RelayWrapper
 )
@@ -22,7 +24,7 @@ var (
 func main() {
 	err := app.Run(context.Background(), os.Args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "initialization error: %s\n", err)
+		log.Debug().Msgf("initialization error: %s\n", err)
 		os.Exit(1)
 	}
 }
@@ -78,12 +80,12 @@ var app = &cli.Command{
 			return fmt.Errorf("invalid secret key: %w", err)
 		}
 		publicKey, _ := kr.GetPublicKey(ctx)
-		fmt.Fprintf(os.Stderr, "[] running as %s\n", publicKey)
+		log.Debug().Msgf("[] running as %s\n", publicKey)
 
 		signerCtx, cancelSigner := context.WithCancel(ctx)
 
 		restartSigner := func() {
-			fmt.Fprintf(os.Stderr, "[signer] restarting signer...\n")
+			log.Debug().Msgf("[signer] restarting signer...\n")
 			cancelSigner()
 			signerCtx, cancelSigner = context.WithCancel(ctx)
 			go runSigner(signerCtx)

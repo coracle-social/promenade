@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"time"
 
 	"fiatjaf.com/promenade/common"
@@ -33,13 +31,13 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 			Tags:      nostr.Tags{{"r", relayURL, "read"}},
 		}
 		kr.SignEvent(ctx, &rlEvt)
-		fmt.Fprintf(os.Stderr, "[acceptor] updating our relay list to %s\n", relayURL)
+		log.Debug().Msgf("[acceptor] updating our relay list to %s\n", relayURL)
 		pool.PublishMany(ctx, common.IndexRelays, rlEvt)
 		ourInbox = []string{relayURL}
 	}
 
 	// listen for incoming shards
-	fmt.Fprintf(os.Stderr, "[acceptor] listening for new shards at %s\n", ourInbox[0])
+	log.Debug().Msgf("[acceptor] listening for new shards at %s\n", ourInbox[0])
 	acceptedTotal := 0
 	now := nostr.Now()
 	for shardEvt := range pool.SubMany(ctx, ourInbox, nostr.Filters{
@@ -51,11 +49,11 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 			Since: &now,
 		},
 	}) {
-		fmt.Fprintf(os.Stderr, "[acceptor] got shard from %s: %s\n", shardEvt.PubKey, shardEvt.ID)
+		log.Debug().Msgf("[acceptor] got shard from %s: %s\n", shardEvt.PubKey, shardEvt.ID)
 
 		// check proof-of-work
 		if work := nip13.CommittedDifficulty(shardEvt.Event); work < int(pow) {
-			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need %d, got %d\n", pow, work)
+			log.Debug().Msgf("[acceptor] not enough work: need %d, got %d\n", pow, work)
 			continue
 		}
 
@@ -64,16 +62,16 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 
 		plaintextShard, err := kr.Decrypt(ctx, shardEvt.Content, shardEvt.PubKey)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[acceptor] failed to decrypt shard: %s\n", err)
+			log.Debug().Msgf("[acceptor] failed to decrypt shard: %s\n", err)
 			continue
 		}
 		if err := shard.DecodeHex(plaintextShard); err != nil {
-			fmt.Fprintf(os.Stderr, "[acceptor] got broken shard: %s\n", err)
+			log.Debug().Msgf("[acceptor] got broken shard: %s\n", err)
 			continue
 		}
 		coordinator := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
 		if coordinator == nil || !nostr.IsValidRelayURL((*coordinator)[1]) {
-			fmt.Fprintf(os.Stderr, "[acceptor] got broken coordinator url '%s'\n", (*coordinator)[1])
+			log.Debug().Msgf("[acceptor] got broken coordinator url '%s'\n", (*coordinator)[1])
 			continue
 		}
 
@@ -104,7 +102,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 		}
 		success := false
 		errs := make(map[string]string, len(theirInbox))
-		fmt.Fprintf(os.Stderr, "[acceptor] sending ack to %v\n", theirInbox)
+		log.Debug().Msgf("[acceptor] sending ack to %v\n", theirInbox)
 		for res := range pool.PublishMany(ctx, theirInbox, ackEvt) {
 			if res.Error == nil {
 				success = true
@@ -113,7 +111,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 			}
 		}
 		if !success {
-			fmt.Fprintf(os.Stderr, "[acceptor] failed to send ack back to %s: %v\n", shardEvt.PubKey, errs)
+			log.Debug().Msgf("[acceptor] failed to send ack back to %s: %v\n", shardEvt.PubKey, errs)
 			continue
 		}
 
@@ -142,7 +140,7 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 		// if we get too many registrations, stop accepting
 		acceptedTotal++
 		if acceptedTotal == int(acceptMax) {
-			fmt.Fprintf(os.Stderr, "[acceptor] reached max accepted groups (%d), restart to accept more or use a different --accept-max value\n", acceptMax)
+			log.Debug().Msgf("[acceptor] reached max accepted groups (%d), restart to accept more or use a different --accept-max value\n", acceptMax)
 			return
 		}
 

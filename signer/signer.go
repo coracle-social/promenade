@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"slices"
 	"time"
 
@@ -48,10 +47,10 @@ func runSigner(ctx context.Context) {
 		if idx == -1 {
 			info, err := nip11.Fetch(ctx, coordinator)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error on nip11 request to %s: %s\n", coordinator, err)
+				log.Debug().Msgf("error on nip11 request to %s: %s\n", coordinator, err)
 				continue
 			} else if !nostr.IsValidPublicKey(info.PubKey) {
-				fmt.Fprintf(os.Stderr, "coordinator %s has invalid pubkey %s\n", coordinator, info.PubKey)
+				log.Debug().Msgf("coordinator %s has invalid pubkey %s\n", coordinator, info.PubKey)
 				continue
 			}
 			filter.Authors = []string{info.PubKey}
@@ -66,7 +65,7 @@ func runSigner(ctx context.Context) {
 
 	mainEventStream := pool.BatchedSubMany(ctx, dfs)
 
-	fmt.Fprintf(os.Stderr, "[signer] started waiting for sign requests from %d key groups\n", ngroups)
+	log.Debug().Msgf("[signer] started waiting for sign requests from %d key groups\n", ngroups)
 	for ie := range mainEventStream {
 		evt := ie.Event
 
@@ -77,7 +76,7 @@ func runSigner(ctx context.Context) {
 			go func() {
 				err := startSession(ctx, ie.Relay, ch)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "failed to start session: %s", err)
+					log.Debug().Msgf("failed to start session: %s", err)
 				}
 			}()
 
@@ -98,13 +97,13 @@ func runSigner(ctx context.Context) {
 func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event) error {
 	sendToCoordinator := func(evt *nostr.Event) {
 		if err := kr.SignEvent(ctx, evt); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
+			log.Debug().Msgf("failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 		if err := relay.Publish(ctx, *evt); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
+			log.Debug().Msgf("failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
 			cancel()
 			return
 		}
@@ -123,7 +122,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
 	}
 
-	fmt.Fprintf(os.Stderr, "[signer] sign session started for %x\n", cfg.PublicKey.X.Bytes())
+	log.Debug().Msgf("[signer] sign session started for %x\n", cfg.PublicKey.X.Bytes())
 
 	sessionId := evt.ID
 	sessions.Store(sessionId, ch)
@@ -187,7 +186,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		Content:   partialSig.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
 	})
-	fmt.Fprintf(os.Stderr, "[signer] signed %x for %x\n", msg, *cfg.PublicKey.X.Bytes())
+	log.Debug().Msgf("[signer] signed %x for %x\n", msg, *cfg.PublicKey.X.Bytes())
 
 	return nil
 }
