@@ -121,20 +121,20 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		slices.Collect(maps.Values(commitments)), msg[:])
 
 	// step-3 (send): group commits and send the result to signers
-	commitEvt := &nostr.Event{
+	groupCommitEvt := &nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindGroupCommit,
 		Content:   groupCommitment.Hex(),
 		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 	}
-	commitEvt.Tags[0] = nostr.Tag{"e", sessionId}
+	groupCommitEvt.Tags[0] = nostr.Tag{"e", sessionId}
 	i = 0
 	for _, signer := range chosenSigners {
-		commitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
+		groupCommitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
 		i++
 	}
-	commitEvt.Sign(s.PrivateKey)
-	relay.BroadcastEvent(commitEvt)
+	groupCommitEvt.Sign(s.PrivateKey)
+	relay.BroadcastEvent(groupCommitEvt)
 
 	// step-4 (send): send event to be signed
 	jevt, _ := easyjson.Marshal(event)

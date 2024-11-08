@@ -28,7 +28,7 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 	}
 
 	if !slices.Contains(filter.Kinds, common.KindConfiguration) ||
-		!slices.Contains(filter.Kinds, common.KindCommit) ||
+		!slices.Contains(filter.Kinds, common.KindGroupCommit) ||
 		!slices.Contains(filter.Kinds, common.KindEventToBeSigned) {
 		return true, "filter is missing required kinds"
 	}
