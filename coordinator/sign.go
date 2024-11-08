@@ -91,9 +91,13 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		chosenSigners: chosenSigners,
 	})
 
+	log.Debug().Str("session", sessionId).Str("user", cfg.PublicKey.X.String()).
+		Strs("signers", slices.Collect(maps.Keys(chosenSigners))).
+		Msg("starting signing session")
+
 	// step-2 (receive): get all pre-commit nonces from signers
 	commitments := make(map[string]frost.Commitment, len(chosenSigners))
-	for _, signer := range chosenSigners {
+	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving commit")
@@ -103,11 +107,21 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 					evt.Kind, common.KindCommit, evt.PubKey)
 			}
 
+			if _, ok := chosenSigners[evt.PubKey]; !ok {
+				log.Warn().Str("pubkey", evt.PubKey).Str("session", sessionId).
+					Msg("got commit from unrelated signer")
+				continue
+			}
+
 			commit := frost.Commitment{}
 			if err := commit.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode commit: %w", err)
 			}
-			commitments[signer.PeerPubKey] = commit
+			commitments[evt.PubKey] = commit
+		}
+
+		if len(commitments) == len(chosenSigners) {
+			break
 		}
 	}
 
@@ -156,7 +170,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	// step-5 (receive): get partial signature from each participant
 	partialSigs := make([]frost.PartialSignature, len(chosenSigners))
 	i = 0
-	for range chosenSigners {
+	for {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout receiving partial signature")
@@ -164,6 +178,12 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			if evt.Kind != common.KindPartialSignature {
 				return fmt.Errorf("got a kind %d instead of %d (partial sig) from %s",
 					evt.Kind, common.KindPartialSignature, evt.PubKey)
+			}
+
+			if _, ok := chosenSigners[evt.PubKey]; !ok {
+				log.Warn().Str("pubkey", evt.PubKey).Str("session", sessionId).
+					Msg("got partial signature from unrelated signer")
+				continue
 			}
 
 			partialSig := frost.PartialSignature{}
@@ -186,8 +206,13 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			}
 			lambdaRegistryLock.Unlock()
 
+			log.Debug().Str("signer", evt.PubKey).Str("session", sessionId).Msg("got good partial signature")
 			partialSigs[i] = partialSig
 			i++
+		}
+
+		if len(partialSigs) == len(chosenSigners) {
+			break
 		}
 	}
 

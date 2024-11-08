@@ -48,12 +48,14 @@ func keepTrackOfWhoIsListening(ctx context.Context, filter nostr.Filter) (reject
 	signer := khatru.GetAuthed(ctx)
 	conn := khatru.GetConnection(ctx)
 
+	log.Info().Str("pubkey", signer).Msg("signer online")
 	onlineSigners.Compute(signer, func(oldValue int, loaded bool) (newValue int, delete bool) {
 		return oldValue + 1, false
 	})
 
 	go func() {
 		<-conn.Context.Done()
+		log.Info().Str("pubkey", signer).Msg("signer offline")
 		onlineSigners.Compute(signer, func(oldValue int, loaded bool) (newValue int, delete bool) {
 			return oldValue - 1, oldValue == 1
 		})
