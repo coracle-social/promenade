@@ -39,7 +39,7 @@ func (c *Configuration) VerifyPartialSignature(
 	lambdaRegistry LambdaRegistry,
 ) error {
 	if partialSig.Value == nil || partialSig.Value.IsZero() {
-		return errors.New("invalid signature shard (nil or zero scalar)")
+		return fmt.Errorf("invalid signature shard (nil or zero scalar): %v", partialSig.Value)
 	}
 
 	if partialSig.SignerIdentifier == 0 || partialSig.SignerIdentifier > c.MaxSigners {

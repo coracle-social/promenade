@@ -211,7 +211,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			i++
 		}
 
-		if len(partialSigs) == len(chosenSigners) {
+		if i == len(chosenSigners) {
 			break
 		}
 	}
