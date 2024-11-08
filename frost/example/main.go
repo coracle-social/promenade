@@ -157,23 +157,12 @@ func coordinator(
 		case <-ctx.Done():
 			return nil, ParticipantError{cfg, s, "timeout receiving partial signature"}
 		case msg := <-ch:
+			// verify partial signature before everything else
 			partialSig := frost.PartialSignature{}
 			if err := partialSig.DecodeHex(msg); err != nil {
 				return nil, err
 			}
-			partialSigs[s] = partialSig
-		}
-	}
 
-	// aggregate signature
-	signature, err := cfg.AggregateSignatures(finalNonce, partialSigs)
-	if err != nil {
-		return nil, err
-	}
-
-	// identify foul players if the signature is not good
-	if ok := signature.Verify(message, btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
-		for s, partialSig := range partialSigs {
 			// get specific pubkeyshard for this signer
 			idx := slices.IndexFunc(pubkeyShards, func(pks frost.PublicKeyShard) bool {
 				return pks.ID == partialSig.SignerIdentifier
@@ -199,11 +188,23 @@ func coordinator(
 				finalNonce,
 				partialSig,
 				message,
+				lambdaRegistry,
 			); err != nil {
 				return nil, ParticipantError{cfg, s, "invalid partial signature: " + err.Error()}
 			}
-		}
 
+			partialSigs[s] = partialSig
+		}
+	}
+
+	// aggregate signature
+	signature, err := cfg.AggregateSignatures(finalNonce, partialSigs)
+	if err != nil {
+		return nil, err
+	}
+
+	// check signature
+	if ok := signature.Verify(message, btcec.NewPublicKey(&cfg.PublicKey.X, &cfg.PublicKey.Y)); !ok {
 		return nil, fmt.Errorf("signature %x is bad", signature.Serialize())
 	}
 
