@@ -51,8 +51,6 @@ func (c *Configuration) VerifyPartialSignature(
 		c.PublicKey.X.Bytes()[:],
 		message,
 	)
-	challengeScalar := new(btcec.ModNScalar)
-	challengeScalar.SetBytes((*[32]byte)(challenge))
 
 	// copied from https://github.com/LLFourn/secp256kfun/blob/8e6fd712717692d475287f4a964be57c8584f54e/schnorr_fun/src/frost/session.rs#L93
 	// R1, R2 = nonces
@@ -66,32 +64,32 @@ func (c *Configuration) VerifyPartialSignature(
 	// R1 + b * R2 + (c * lambda) * X - s * G
 
 	// (c * lambda)
-	first := ComputeLambda(partialSig.SignerIdentifier, c.Participants)
-	first.Mul(challengeScalar)
+	sAux := new(btcec.ModNScalar)
+	sAux.SetBytes((*[32]byte)(challenge))
+	sAux.Mul(lambdaRegistry.getOrNew(c.Participants, partialSig.SignerIdentifier))
 
 	// b * R2
-	second := new(btcec.JacobianPoint)
-	btcec.ScalarMultNonConst(bindingCoefficient, commit[1], second)
+	leftSide := new(btcec.JacobianPoint)
+	btcec.ScalarMultNonConst(bindingCoefficient, commit[1], leftSide)
 
 	// R1 + b * R2
-	third := new(btcec.JacobianPoint)
-	btcec.AddNonConst(second, commit[0], third)
+	btcec.AddNonConst(leftSide, commit[0], leftSide)
 
 	// (c * lambda) * X
-	fourth := new(btcec.JacobianPoint)
-	btcec.ScalarMultNonConst(first, pks.PublicKey, fourth)
+	aux := new(btcec.JacobianPoint)
+	btcec.ScalarMultNonConst(sAux, pks.PublicKey, aux)
 
-	// b * R2 + (c * lambda) * X
-	btcec.AddNonConst(fourth, second, fourth)
-	fourth.ToAffine()
+	// R1 + b * R2 + (c * lambda) * X
+	btcec.AddNonConst(leftSide, aux, leftSide)
 
 	// s * G
-	fifth := new(btcec.JacobianPoint)
-	btcec.ScalarBaseMultNonConst(partialSig.Value, fifth)
-	fifth.ToAffine()
+	rightSide := new(btcec.JacobianPoint)
+	btcec.ScalarBaseMultNonConst(partialSig.Value, rightSide)
 
 	// R1 + b * R2 + (c * lambda) * X == s * G
-	if !fourth.X.Equals(&fifth.X) || !fourth.Y.Equals(&fifth.Y) {
+	leftSide.ToAffine()
+	rightSide.ToAffine()
+	if !leftSide.X.Equals(&rightSide.X) || !leftSide.Y.Equals(&rightSide.Y) {
 		return fmt.Errorf("invalid signature shard for signer %d", partialSig.SignerIdentifier)
 	}
 
