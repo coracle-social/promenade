@@ -40,6 +40,11 @@ var app = &cli.Command{
 			Usage: "path to the eventstore directory",
 			Value: "./db",
 		},
+		&cli.UintFlag{
+			Name:  "min-pow",
+			Usage: "how much proof-of-work to require in order to accept a shard",
+			Value: 20,
+		},
 		&cli.StringFlag{
 			Name:  "accept-relay",
 			Usage: "specify a relay URL to use to receive key shards from users that may want to use you as a signer",
@@ -85,7 +90,7 @@ var app = &cli.Command{
 		}
 
 		if relay := c.String("accept-relay"); relay != "" {
-			go runAcceptor(ctx, relay, c.Uint("accept-max"), restartSigner)
+			go runAcceptor(ctx, relay, c.Uint("accept-max"), c.Uint("min-pow"), restartSigner)
 		}
 
 		runSigner(signerCtx)

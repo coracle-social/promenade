@@ -12,7 +12,7 @@ import (
 	"github.com/nbd-wtf/go-nostr/nip13"
 )
 
-func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restartSigner func()) {
+func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uint64, restartSigner func()) {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	// update our 10002 list if necessary
@@ -54,8 +54,8 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, restart
 		fmt.Fprintf(os.Stderr, "[acceptor] got shard from %s: %s\n", shardEvt.PubKey, shardEvt.ID)
 
 		// check proof-of-work
-		if work := nip13.CommittedDifficulty(shardEvt.Event); work < 20 {
-			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need 20, got %d\n", work)
+		if work := nip13.CommittedDifficulty(shardEvt.Event); work < int(pow) {
+			fmt.Fprintf(os.Stderr, "[acceptor] not enough work: need %d, got %d\n", pow, work)
 			continue
 		}
 
