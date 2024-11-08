@@ -7,11 +7,11 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0
-	github.com/fiatjaf/eventstore v0.12.0
-	github.com/fiatjaf/khatru v0.9.0
+	github.com/fiatjaf/eventstore v0.13.0
+	github.com/fiatjaf/khatru v0.11.0
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mailru/easyjson v0.7.7
-	github.com/nbd-wtf/go-nostr v0.41.0
+	github.com/nbd-wtf/go-nostr v0.42.0
 	github.com/puzpuzpuz/xsync/v3 v3.4.0
 	github.com/rs/cors v1.11.1
 	github.com/rs/zerolog v1.32.0
@@ -21,7 +21,9 @@ require (
 require (
 	fiatjaf.com/lib v0.2.0 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
+	github.com/bep/debounce v1.2.1 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.3 // indirect
+	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/dgraph-io/badger/v4 v4.3.1 // indirect
@@ -35,6 +37,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
+	github.com/greatroar/blobloom v0.8.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

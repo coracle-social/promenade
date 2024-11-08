@@ -8,7 +8,7 @@ import (
 )
 
 func filterOutEverythingExceptWhatWeWant(ctx context.Context, evt *nostr.Event) (reject bool, msg string) {
-	if evt.IsEphemeral() {
+	if nostr.IsEphemeralKind(evt.Kind) {
 		return false, ""
 	}
 	if evt.Kind == common.KindAccountRegistration {
@@ -32,4 +32,10 @@ func handleCreate(ctx context.Context, evt *nostr.Event) {
 		log.Warn().Err(err).Stringer("event", evt).Msg("event is not an account registration")
 		return
 	}
+
+	signers := make([]string, len(ar.Signers))
+	for i, signer := range ar.Signers {
+		signers[i] = signer.PeerPubKey
+	}
+	log.Info().Str("pubkey", ar.PubKey).Strs("signers", signers).Msg("account registered")
 }
