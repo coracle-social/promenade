@@ -82,7 +82,7 @@ func runSigner(ctx context.Context) {
 			}()
 
 			ch <- evt
-		case common.KindCommit, common.KindEventToBeSigned:
+		case common.KindGroupCommit, common.KindEventToBeSigned:
 			eTag := evt.Tags.GetFirst([]string{"e", ""})
 			if eTag == nil {
 				return
