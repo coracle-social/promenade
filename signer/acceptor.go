@@ -7,6 +7,7 @@ import (
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
 	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip11"
 	"github.com/nbd-wtf/go-nostr/nip13"
 )
 
@@ -75,6 +76,18 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 			continue
 		}
 
+		// TOFU the coordinator's pubkey
+		info, err := nip11.Fetch(ctx, (*coordinator)[1])
+		if err != nil {
+			log.Debug().Msgf("error on nip11 request to %s: %s\n", coordinator, err)
+			continue
+		} else if !nostr.IsValidPublicKey(info.PubKey) {
+			log.Debug().Msgf("coordinator %s has invalid pubkey %s\n", coordinator, info.PubKey)
+			continue
+		}
+		// surreptitiously inject it into the event that we will save
+		(*coordinator)[2] = info.PubKey
+
 		// reply with an ack
 		ackEvt := nostr.Event{
 			CreatedAt: nostr.Now(),
@@ -122,9 +135,12 @@ func runAcceptor(ctx context.Context, relayURL string, acceptMax uint64, pow uin
 		}
 		// store now just to prevent losing data in between
 		storedShard := nostr.Event{
-			Kind:    common.KindStoredShard,
-			PubKey:  shardEvt.PubKey,
-			Tags:    shardEvt.Tags,
+			Kind:   common.KindStoredShard,
+			PubKey: shardEvt.PubKey,
+			Tags: append(
+				shardEvt.Tags,
+				nostr.Tag{""},
+			),
 			Content: plaintextShard,
 		}
 		storedShard.ID = storedShard.GetID()

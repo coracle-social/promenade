@@ -11,7 +11,6 @@ import (
 	"fiatjaf.com/promenade/frost"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/nip11"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
@@ -38,24 +37,18 @@ func runSigner(ctx context.Context) {
 
 	ngroups := 0
 	for shardEvt := range results {
-		coordinatorTag := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
-		coordinator := (*coordinatorTag)[1]
+		coordinator := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
 
 		idx := slices.IndexFunc(dfs, func(df nostr.DirectedFilters) bool {
-			return df.Relay == nostr.NormalizeURL(coordinator)
+			return df.Relay == nostr.NormalizeURL((*coordinator)[1]) &&
+				df.Filters[0].Authors[0] == (*coordinator)[2]
 		})
 		if idx == -1 {
-			info, err := nip11.Fetch(ctx, coordinator)
-			if err != nil {
-				log.Debug().Msgf("error on nip11 request to %s: %s\n", coordinator, err)
-				continue
-			} else if !nostr.IsValidPublicKey(info.PubKey) {
-				log.Debug().Msgf("coordinator %s has invalid pubkey %s\n", coordinator, info.PubKey)
-				continue
-			}
-			filter.Authors = []string{info.PubKey}
+			// use the pubkey the coordinator had at the time of shard creation
+			filter.Authors = []string{(*coordinator)[2]}
+
 			dfs = append(dfs, nostr.DirectedFilters{
-				Relay:   nostr.NormalizeURL(coordinator),
+				Relay:   nostr.NormalizeURL((*coordinator)[1]),
 				Filters: nostr.Filters{filter},
 			})
 		}
