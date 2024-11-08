@@ -38,4 +38,18 @@ func handleCreate(ctx context.Context, evt *nostr.Event) {
 		signers[i] = signer.PeerPubKey
 	}
 	log.Info().Str("pubkey", ar.PubKey).Strs("signers", signers).Msg("account registered")
+
+	// let signers know we have this registered here
+	for _, signer := range ar.Signers {
+		ackEvt := nostr.Event{
+			CreatedAt: nostr.Now(),
+			Kind:      common.KindShardACK,
+			Tags: nostr.Tags{
+				nostr.Tag{"P", ar.PubKey},
+				nostr.Tag{"p", signer.PeerPubKey},
+			},
+		}
+		ackEvt.Sign(s.PrivateKey)
+		relay.BroadcastEvent(&ackEvt)
+	}
 }

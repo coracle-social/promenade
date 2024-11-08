@@ -20,16 +20,21 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 		return true, "auth-required: signers must authenticate"
 	}
 
-	// aside from nip-46 stuff, we only allow signers to subscribe to events addressed to themselves
-	// which will be the frost signing flow events
+	// aside from these, we only allow signers to subscribe to events addressed to themselves
+	// which will be the frost signing flow events and the initial shard ack event
 	pTags, _ := filter.Tags["p"]
 	if len(pTags) != 1 || pTags[0] != requester {
 		return true, "needs a single 'p' tag equal to your own pubkey"
 	}
 
-	if !slices.Contains(filter.Kinds, common.KindConfiguration) ||
-		!slices.Contains(filter.Kinds, common.KindGroupCommit) ||
-		!slices.Contains(filter.Kinds, common.KindEventToBeSigned) {
+	if len(filter.Kinds) == 3 &&
+		slices.Contains(filter.Kinds, common.KindConfiguration) ||
+		slices.Contains(filter.Kinds, common.KindGroupCommit) ||
+		slices.Contains(filter.Kinds, common.KindEventToBeSigned) {
+		// ok, this is the signing flow
+	} else if len(filter.Kinds) == 1 && filter.Kinds[0] == common.KindShardACK {
+		// also ok, this is the initial ack flow
+	} else {
 		return true, "filter is missing required kinds"
 	}
 

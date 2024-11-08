@@ -76,9 +76,11 @@ func main() {
 		keepTrackOfWhoIsListening,
 	)
 	relay.OnEphemeralEvent = append(relay.OnEphemeralEvent,
-		handleCreate,
 		handleNIP46Request,
 		handleSignerStuff,
+	)
+	relay.OnEventSaved = append(relay.OnEventSaved,
+		handleCreate,
 	)
 	mux := relay.Router()
 

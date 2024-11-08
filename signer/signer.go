@@ -58,7 +58,7 @@ func runSigner(ctx context.Context) {
 
 	mainEventStream := pool.BatchedSubMany(ctx, dfs)
 
-	log.Debug().Msgf("[signer] started waiting for sign requests from %d key groups\n", ngroups)
+	log.Debug().Msgf("[signer] started waiting for sign requests from %d key groups", ngroups)
 	for ie := range mainEventStream {
 		evt := ie.Event
 
@@ -107,7 +107,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	evt := <-ch
 	cfg := frost.Configuration{}
 	if err := cfg.DecodeHex(evt.Content); err != nil {
-		return fmt.Errorf("error decoding config: %w\n", err)
+		return fmt.Errorf("error decoding config: %w", err)
 	}
 
 	res, _ := eventsdb.QuerySync(ctx, nostr.Filter{Authors: []string{cfg.PublicKey.X.String()}})
@@ -115,7 +115,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
 	}
 
-	log.Debug().Msgf("[signer] sign session started for %x\n", cfg.PublicKey.X.Bytes())
+	log.Debug().Msgf("[signer] sign session started for %x", cfg.PublicKey.X.Bytes())
 
 	sessionId := evt.ID
 	sessions.Store(sessionId, ch)
@@ -179,7 +179,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		Content:   partialSig.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
 	})
-	log.Debug().Msgf("[signer] signed %x for %x\n", msg, *cfg.PublicKey.X.Bytes())
+	log.Debug().Msgf("[signer] signed %x for %x", msg, *cfg.PublicKey.X.Bytes())
 
 	return nil
 }

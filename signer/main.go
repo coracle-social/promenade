@@ -24,7 +24,7 @@ var (
 func main() {
 	err := app.Run(context.Background(), os.Args)
 	if err != nil {
-		log.Debug().Msgf("initialization error: %s\n", err)
+		log.Debug().Msgf("initialization error: %s", err)
 		os.Exit(1)
 	}
 }
@@ -51,11 +51,6 @@ var app = &cli.Command{
 			Name:  "accept-relay",
 			Usage: "specify a relay URL to use to receive key shards from users that may want to use you as a signer",
 		},
-		&cli.UintFlag{
-			Name:  "accept-max",
-			Usage: "just to prevent spam, limit the number of accepted groups to this -- upon restart we will accept up to this number again",
-			Value: 30,
-		},
 	},
 	Action: func(ctx context.Context, c *cli.Command) error {
 		var err error
@@ -80,19 +75,19 @@ var app = &cli.Command{
 			return fmt.Errorf("invalid secret key: %w", err)
 		}
 		publicKey, _ := kr.GetPublicKey(ctx)
-		log.Debug().Msgf("[] running as %s\n", publicKey)
+		log.Debug().Msgf("[] running as %s", publicKey)
 
 		signerCtx, cancelSigner := context.WithCancel(ctx)
 
 		restartSigner := func() {
-			log.Debug().Msgf("[signer] restarting signer...\n")
+			log.Info().Msg("[signer] restarting signer...")
 			cancelSigner()
 			signerCtx, cancelSigner = context.WithCancel(ctx)
 			go runSigner(signerCtx)
 		}
 
 		if relay := c.String("accept-relay"); relay != "" {
-			go runAcceptor(ctx, relay, c.Uint("accept-max"), c.Uint("min-pow"), restartSigner)
+			go runAcceptor(ctx, relay, c.Uint("min-pow"), restartSigner)
 		}
 
 		runSigner(signerCtx)
