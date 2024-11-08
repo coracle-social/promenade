@@ -17,13 +17,13 @@ type Configuration struct {
 }
 
 // Signer returns a new participant of the protocol instantiated from the Configuration and the signer's key shard.
-func (c *Configuration) Signer(keyshard KeyShard) (*Signer, error) {
+func (c *Configuration) Signer(keyshard KeyShard, lambdaRegistry LambdaRegistry) (*Signer, error) {
 	if err := c.ValidateKeyShard(keyshard); err != nil {
 		return nil, err
 	}
 
 	return &Signer{
-		LambdaRegistry: make(LambdaRegistry),
+		LambdaRegistry: lambdaRegistry,
 		KeyShard:       keyshard,
 		Configuration:  c,
 	}, nil

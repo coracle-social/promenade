@@ -36,6 +36,7 @@ func (c *Configuration) VerifyPartialSignature(
 	finalNonce *btcec.JacobianPoint,
 	partialSig PartialSignature,
 	message []byte,
+	lambdaRegistry LambdaRegistry,
 ) error {
 	if partialSig.Value == nil || partialSig.Value.IsZero() {
 		return errors.New("invalid signature shard (nil or zero scalar)")

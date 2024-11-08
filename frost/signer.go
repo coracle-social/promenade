@@ -124,7 +124,7 @@ func (s *Signer) Sign(
 	challengeScalar.SetBytes((*[32]byte)(challenge))
 
 	// 9 : Λi ← Lagrange(S, i)
-	lambda := s.LambdaRegistry.GetOrNew(s.Configuration.Participants, s.KeyShard.ID) // Lagrange coefficient λi
+	lambda := s.LambdaRegistry.getOrNew(s.Configuration.Participants, s.KeyShard.ID) // Lagrange coefficient λi
 
 	// 10 : σi ← di + bei + cΛixi
 	z := new(btcec.ModNScalar).

@@ -106,6 +106,8 @@ func coordinator(
 	signers []chan string,
 	message []byte,
 ) ([]byte, error) {
+	lambdaRegistry := make(frost.LambdaRegistry)
+
 	// step-1 (send): initialize each participant
 	cfgHex := cfg.Hex()
 	for s, ch := range signers {
@@ -215,7 +217,7 @@ func signer(ch chan string, shard frost.KeyShard) {
 		panic(err)
 	}
 
-	signer, err := cfg.Signer(shard)
+	signer, err := cfg.Signer(shard, make(frost.LambdaRegistry))
 	if err != nil {
 		panic(err)
 	}
