@@ -32,21 +32,24 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 		slices.Contains(filter.Kinds, common.KindGroupCommit) ||
 		slices.Contains(filter.Kinds, common.KindEventToBeSigned) {
 		// ok, this is the signing flow
+		res, err := eventsdb.QuerySync(ctx, nostr.Filter{
+			Tags:  nostr.TagMap{"p": []string{requester}},
+			Kinds: []int{common.KindAccountRegistration},
+			Limit: 1,
+		})
+		if err != nil {
+			return true, "error: failed to query"
+		}
+		if len(res) == 0 {
+			return true, "restricted: you are not a signer"
+		}
+		return false, ""
 	} else if len(filter.Kinds) == 1 && filter.Kinds[0] == common.KindShardACK {
 		// also ok, this is the initial ack flow
+		return false, ""
 	} else {
 		return true, "filter is missing required kinds"
 	}
-
-	res, err := eventsdb.QuerySync(ctx, nostr.Filter{Tags: nostr.TagMap{"p": []string{requester}}})
-	if err != nil {
-		return true, "error: failed to query"
-	}
-	if len(res) == 0 {
-		return true, "restricted: you are not a signer"
-	}
-
-	return false, ""
 }
 
 func keepTrackOfWhoIsListening(ctx context.Context, filter nostr.Filter) (reject bool, msg string) {
