@@ -55,7 +55,7 @@ func runAcceptor(ctx context.Context, relayURL string, pow uint64, restartSigner
 }
 
 func handleShard(ctx context.Context, shardEvt *nostr.Event, pow uint64, restartSigner func()) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute*2)
+	ctx, cancel := context.WithTimeout(ctx, time.Minute*5)
 	defer cancel()
 
 	ourPubkey, _ := kr.GetPublicKey(ctx)
