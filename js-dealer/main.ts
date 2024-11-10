@@ -62,7 +62,6 @@ export async function shardGetBunker(
     const convkey = getConversationKey(sec, signer);
     const ciphertext = encrypt(encoded, convkey);
 
-    console.log("[info] mining shard event");
     const unsignedShardEvt = await minePow(
       {
         pubkey: pub,
