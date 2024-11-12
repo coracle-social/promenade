@@ -49,14 +49,13 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		Threshold:    int(kuc.Threshold),
 		MaxSigners:   len(kuc.Signers),
 		PublicKey:    &pubkey,
-		Participants: make([]int, len(kuc.Signers)),
+		Participants: make([]int, 0, kuc.Threshold),
 	}
-	for s, signer := range kuc.Signers {
-		cfg.Participants[s] = signer.Shard.ID
-
+	for _, signer := range kuc.Signers {
 		if len(chosenSigners) < cfg.Threshold {
 			if _, isOnline := onlineSigners.Load(signer.PeerPubKey); isOnline {
 				chosenSigners[signer.PeerPubKey] = signer
+				cfg.Participants = append(cfg.Participants, signer.Shard.ID)
 			}
 		}
 	}
