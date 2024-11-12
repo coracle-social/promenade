@@ -54,6 +54,10 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 
 func keepTrackOfWhoIsListening(ctx context.Context, filter nostr.Filter) (reject bool, msg string) {
 	signer := khatru.GetAuthed(ctx)
+	if signer == "" {
+		return false, ""
+	}
+
 	conn := khatru.GetConnection(ctx)
 
 	log.Info().Str("pubkey", signer).Msg("signer online")
