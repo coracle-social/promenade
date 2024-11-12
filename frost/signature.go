@@ -18,15 +18,15 @@ func (c *Configuration) AggregateSignatures(
 	// SignAgg(pk, ρ, {σi}i∈S, m) -- https://eprint.iacr.org/2023/899.pdf, page 15
 
 	// 5 : s ′ ← ∑∈S σi
-	z := new(btcec.ModNScalar)
+	s := new(btcec.ModNScalar)
 	for _, partialSig := range partialSigs {
 		if partialSig.Value == nil || partialSig.Value.IsZero() {
 			return nil, errors.New("invalid signature shard (nil or zero scalar)")
 		}
-		z.Add(partialSig.Value)
+		s.Add(partialSig.Value)
 	}
 
-	return schnorr.NewSignature(&finalNonce.X, z), nil
+	return schnorr.NewSignature(&finalNonce.X, s), nil
 }
 
 func (c *Configuration) VerifyPartialSignature(

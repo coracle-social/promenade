@@ -75,6 +75,8 @@ func flow(
 		participants[s] = shards[s].PublicKeyShard.ID
 	}
 
+	fmt.Println("chosen signers:", len(signers))
+
 	// start signing process
 	cfg := &frost.Configuration{
 		Threshold:    threshold,
