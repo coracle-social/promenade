@@ -1,10 +1,10 @@
 = promenade
 
-I forgot what was the meaning of this acronym.
+provider of multisig for events on nostr and destroyer of encryption.
 
 == implementation details
 
-the signature algorithm is implemented roughly as described in the FROST paper, and most of it was copied from https://github.com/bytemare/frost and adapted to use `github.com/btcsuite/btcd/btcec`, but it has the following substantial changes:
+the signature algorithm is implemented roughly as described in the https://eprint.iacr.org/2023/899.pdf, with big inspiration from the code at https://github.com/LLFourn/secp256kfun/tree/8e6fd712717692d475287f4a964be57c8584f54e/schnorr_fun/src/frost. relative to the paper (but following secp256kfun) this implementations has the following substantial changes:
 
   - for BIP-340 compatibility, the key dealing algorithm negates the secret key before sharding if its public key's `y` is odd;
   - for BIP-340 compatibility, when creating partial signatures, signers have to compute the group commitment, and if it's `y` is odd then all the public nonces and their own private nonce is negated;
@@ -163,3 +163,7 @@ the signature algorithm is implemented roughly as described in the FROST paper, 
     - [partial-signature-scalar]: 32-bytes (big-endian)
 
 10. _coordinator_ assembles all the partial signatures and builds the aggregated signature which can then be put into the event and sent as a response to the `sign_event` NIP-46 request.
+
+== issues
+
+since this implementation uses `github.com/btcsuite/btcd/btcec` and that library doesn't seem to provide constant-time curve operations signers using this may be vulnerable to side-channel attacks by an evil coordinator.
