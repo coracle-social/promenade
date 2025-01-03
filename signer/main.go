@@ -47,9 +47,9 @@ var app = &cli.Command{
 			Usage: "how much proof-of-work to require in order to accept a shard",
 			Value: 20,
 		},
-		&cli.StringFlag{
+		&cli.StringSliceFlag{
 			Name:  "accept-relay",
-			Usage: "specify a relay URL to use to receive key shards from users that may want to use you as a signer",
+			Usage: "specify one or more relay URLs to receive key shards from users that may want to use you as a signer",
 		},
 	},
 	Action: func(ctx context.Context, c *cli.Command) error {
@@ -86,8 +86,10 @@ var app = &cli.Command{
 			go runSigner(signerCtx)
 		}
 
-		if relay := c.String("accept-relay"); relay != "" {
-			go runAcceptor(ctx, relay, c.Uint("min-pow"), restartSigner)
+		if relays := c.StringSlice("accept-relay"); len(relays) > 0 {
+			go runAcceptor(ctx, relays, c.Uint("min-pow"), restartSigner)
+		} else {
+			log.Warn().Msg("not accepting new key shards because --accept-relay wasn't set")
 		}
 
 		runSigner(signerCtx)

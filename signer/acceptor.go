@@ -12,34 +12,48 @@ import (
 	"github.com/nbd-wtf/go-nostr/nip13"
 )
 
-func runAcceptor(ctx context.Context, relayURL string, pow uint64, restartSigner func()) {
+func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSigner func()) {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	// update our 10002 list if necessary
-	ourInbox := make([]string, 0, 1)
-	for evt := range pool.SubManyEose(ctx, common.IndexRelays, nostr.Filters{
+	var latest *nostr.Event
+	for ie := range pool.SubManyEose(ctx, common.IndexRelays, nostr.Filters{
 		{Kinds: []int{10002}, Authors: []string{ourPubkey}},
 	}) {
-		for _, tag := range evt.Tags.All([]string{"r", ""}) {
+		if latest == nil || latest.CreatedAt < ie.CreatedAt {
+			latest = ie.Event
+		}
+	}
+
+	var ourInbox []string
+	if latest != nil {
+		ourInbox = make([]string, 0, 4)
+		for _, tag := range latest.Tags.All([]string{"r", ""}) {
 			if len(tag) == 2 || tag[2] == "read" {
 				ourInbox = append(ourInbox, tag[1])
 			}
 		}
 	}
-	if len(ourInbox) != 1 || ourInbox[0] != relayURL {
+
+	if !slices.Equal(ourInbox, relayURLs) {
+		tags := make(nostr.Tags, len(relayURLs))
+		for i, url := range relayURLs {
+			tags[i] = nostr.Tag{"r", url, "read"}
+		}
+
 		rlEvt := nostr.Event{
 			CreatedAt: nostr.Now(),
 			Kind:      10002,
-			Tags:      nostr.Tags{{"r", relayURL, "read"}},
+			Tags:      tags,
 		}
 		kr.SignEvent(ctx, &rlEvt)
-		log.Debug().Msgf("[acceptor] updating our relay list to %s", relayURL)
+		log.Debug().Msgf("[acceptor] updating our relay list to %v (from %v)", relayURLs, ourInbox)
 		pool.PublishMany(ctx, common.IndexRelays, rlEvt)
-		ourInbox = []string{relayURL}
+		ourInbox = relayURLs
 	}
 
 	// listen for incoming shards
-	log.Debug().Msgf("[acceptor] listening for new shards at %s", ourInbox[0])
+	log.Debug().Msgf("[acceptor] listening for new shards at %v", ourInbox)
 	now := nostr.Now()
 	for shardEvt := range pool.SubMany(ctx, ourInbox, nostr.Filters{
 		{
