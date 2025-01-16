@@ -20,11 +20,20 @@ func veryPrivateFiltering(ctx context.Context, filter nostr.Filter) (reject bool
 		return true, "auth-required: signers must authenticate"
 	}
 
+	// people using their master secret key are allowed to read their own registration event
+	if len(filter.Kinds) == 1 && filter.Kinds[0] == common.KindAccountRegistration {
+		if len(filter.Authors) == 1 && requester == filter.Authors[0] {
+			return false, ""
+		} else {
+			return true, "restricted: you can only read your own account registration"
+		}
+	}
+
 	// aside from these, we only allow signers to subscribe to events addressed to themselves
 	// which will be the frost signing flow events and the initial shard ack event
 	pTags, _ := filter.Tags["p"]
 	if len(pTags) != 1 || pTags[0] != requester {
-		return true, "needs a single 'p' tag equal to your own pubkey"
+		return true, "restricted: needs a single 'p' tag equal to your own pubkey"
 	}
 
 	if len(filter.Kinds) == 3 &&
