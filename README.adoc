@@ -2,6 +2,12 @@
 
 provider of multisig for events on nostr and destroyer of encryption.
 
+== video explanation
+
+video::https://cdn.azzamo.net/c6e8ea5bb6cf5b31b1da0ad0b40fbbfb1b2c26e611f249a964cc64782f9f8187.mp4[]
+
+https://njump.me/nevent1qqsqqqph7l5mv0fv5hekm0nxx7ty9nszfmyhpjhh84h3srugvxe9e9qpr9mhxue69uhhq7tjv9kkjepwve5kzar2v9nzucm0d5q35amnwvaz7tmrdpex7mnfvdkx2tnyw3hkummw9e3k7mgzyqalp33lewf5vdq847t6te0wvnags0gs0mu72kz8938tn24wlfze6kfp7fz
+
 == implementation details
 
 the signature algorithm is implemented roughly as described in the https://eprint.iacr.org/2023/899.pdf, with big inspiration from the code at https://github.com/LLFourn/secp256kfun/tree/8e6fd712717692d475287f4a964be57c8584f54e/schnorr_fun/src/frost. relative to the paper (but following secp256kfun) this implementations has the following substantial changes:
