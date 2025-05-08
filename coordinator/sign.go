@@ -96,10 +96,14 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 
 	// step-2 (receive): get all pre-commit nonces from signers
 	commitments := make(map[string]frost.Commitment, len(chosenSigners))
+	missing := make(map[string]struct{}, len(chosenSigners))
+	for pubkey := range chosenSigners {
+		missing[pubkey] = struct{}{}
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout receiving commit")
+			return fmt.Errorf("timeout receiving commits, missing: %v", slices.Collect(maps.Keys(missing)))
 		case evt := <-ch:
 			if evt.Kind != common.KindCommit {
 				return fmt.Errorf("got a kind %d instead of %d (commit) from %s",
@@ -117,6 +121,8 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 				return fmt.Errorf("failed to decode commit: %w", err)
 			}
 			commitments[evt.PubKey] = commit
+
+			delete(missing, evt.PubKey)
 		}
 
 		if len(commitments) == len(chosenSigners) {
@@ -168,11 +174,15 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 
 	// step-5 (receive): get partial signature from each participant
 	partialSigs := make([]frost.PartialSignature, len(chosenSigners))
+	missing = make(map[string]struct{}, len(chosenSigners))
+	for pubkey := range chosenSigners {
+		missing[pubkey] = struct{}{}
+	}
 	i = 0
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout receiving partial signature")
+			return fmt.Errorf("timeout receiving partial signatures, missing: %v", slices.Collect(maps.Keys(missing)))
 		case evt := <-ch:
 			if evt.Kind != common.KindPartialSignature {
 				return fmt.Errorf("got a kind %d instead of %d (partial sig) from %s",
