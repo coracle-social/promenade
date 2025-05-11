@@ -2,20 +2,19 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"slices"
 	"time"
 
+	"fiatjaf.com/nostr"
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
 	"github.com/mailru/easyjson"
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 // signing sessions are indexed by the id of the first event that triggered them
-var sessions = xsync.NewMapOf[string, chan *nostr.Event]()
+var sessions = xsync.NewMapOf[nostr.ID, chan nostr.Event]()
 
 var lambdaRegistry = make(frost.LambdaRegistry)
 
@@ -23,40 +22,39 @@ func runSigner(ctx context.Context) {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	filter := nostr.Filter{
-		Kinds: []int{common.KindConfiguration, common.KindGroupCommit, common.KindEventToBeSigned},
+		Kinds: []nostr.Kind{common.KindConfiguration, common.KindGroupCommit, common.KindEventToBeSigned},
 		Tags: nostr.TagMap{
-			"p": []string{ourPubkey},
+			"p": []string{ourPubkey.Hex()},
 		},
 	}
 
-	dfs := make([]nostr.DirectedFilters, 0, 2)
-	results, err := eventsdb.QueryEvents(ctx, nostr.Filter{Kinds: []int{common.KindStoredShard}})
-	if err != nil {
-		panic(err)
-	}
+	dfs := make([]nostr.DirectedFilter, 0, 2)
 
 	ngroups := 0
-	for shardEvt := range results {
-		coordinator := shardEvt.Tags.GetFirst([]string{"coordinator", ""})
+	for shardEvt := range store.QueryEvents(nostr.Filter{Kinds: []nostr.Kind{common.KindStoredShard}}, 500) {
+		coordinator := shardEvt.Tags.Find("coordinator")
+		coordinatorPubKey, err := nostr.PubKeyFromHex(coordinator[2])
+		if err != nil {
+			panic(fmt.Errorf("coordinator with invalid pubkey %v was stored: %w", coordinator, err))
+		}
 
-		idx := slices.IndexFunc(dfs, func(df nostr.DirectedFilters) bool {
-			return df.Relay == nostr.NormalizeURL((*coordinator)[1]) &&
-				df.Filters[0].Authors[0] == (*coordinator)[2]
+		idx := slices.IndexFunc(dfs, func(df nostr.DirectedFilter) bool {
+			return df.Relay == nostr.NormalizeURL(coordinator[1]) && df.Filter.Authors[0] == coordinatorPubKey
 		})
 		if idx == -1 {
 			// use the pubkey the coordinator had at the time of shard creation
-			filter.Authors = []string{(*coordinator)[2]}
+			filter.Authors = []nostr.PubKey{coordinatorPubKey}
 
-			dfs = append(dfs, nostr.DirectedFilters{
-				Relay:   nostr.NormalizeURL((*coordinator)[1]),
-				Filters: nostr.Filters{filter},
+			dfs = append(dfs, nostr.DirectedFilter{
+				Relay:  nostr.NormalizeURL(coordinator[1]),
+				Filter: filter,
 			})
 		}
 
 		ngroups++
 	}
 
-	mainEventStream := pool.BatchedSubMany(ctx, dfs)
+	mainEventStream := pool.BatchedSubManyEose(ctx, dfs, nostr.SubscriptionOptions{})
 
 	log.Debug().Msgf("[signer] started waiting for sign requests from %d key groups", ngroups)
 	for ie := range mainEventStream {
@@ -64,7 +62,7 @@ func runSigner(ctx context.Context) {
 
 		switch evt.Kind {
 		case common.KindConfiguration:
-			ch := make(chan *nostr.Event)
+			ch := make(chan nostr.Event)
 
 			go func() {
 				err := startSession(ctx, ie.Relay, ch)
@@ -75,19 +73,24 @@ func runSigner(ctx context.Context) {
 
 			ch <- evt
 		case common.KindGroupCommit, common.KindEventToBeSigned:
-			eTag := evt.Tags.GetFirst([]string{"e", ""})
+			eTag := evt.Tags.Find("e")
 			if eTag == nil {
 				return
 			}
 
-			if ch, ok := sessions.Load((*eTag)[1]); ok {
+			id, err := nostr.IDFromHex(eTag[1])
+			if err != nil {
+				return
+			}
+
+			if ch, ok := sessions.Load(id); ok {
 				ch <- evt
 			}
 		}
 	}
 }
 
-func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event) error {
+func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) error {
 	sendToCoordinator := func(evt *nostr.Event) {
 		if err := kr.SignEvent(ctx, evt); err != nil {
 			log.Debug().Msgf("failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
@@ -110,9 +113,9 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		return fmt.Errorf("error decoding config: %w", err)
 	}
 
-	res, _ := eventsdb.QuerySync(ctx, nostr.Filter{Authors: []string{cfg.PublicKey.X.String()}})
-	if len(res) == 0 {
-		return fmt.Errorf("unknown pubkey %x", *cfg.PublicKey.X.Bytes())
+	var res nostr.Event
+	for pk := range store.QueryEvents(nostr.Filter{Authors: []nostr.PubKey{*cfg.PublicKey.X.Bytes()}}, 100) {
+		res = pk
 	}
 
 	log.Debug().Msgf("[signer] sign session started for %x", cfg.PublicKey.X.Bytes())
@@ -121,7 +124,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	sessions.Store(sessionId, ch)
 
 	shard := frost.KeyShard{}
-	if err := shard.DecodeHex(res[0].Content); err != nil {
+	if err := shard.DecodeHex(res.Content); err != nil {
 		return fmt.Errorf("failed to decode our shard: %w", err)
 	}
 
@@ -131,14 +134,14 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 	}
 
 	// step-2 (send): send our pre-commit to coordinator
-	ourCommitment := signer.Commit(sessionId)
+	ourCommitment := signer.Commit(sessionId.Hex() /* use the event id as the session id */)
 	commitments := make([]frost.Commitment, 0, cfg.Threshold)
 	commitments = append(commitments, ourCommitment)
 	sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindCommit,
 		Content:   ourCommitment.Hex(),
-		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
+		Tags:      nostr.Tags{{"e", sessionId.Hex()}, {"p", cfg.PublicKey.X.String()}},
 	})
 
 	// step-3 (receive): get commits from other signers and the message to be signed
@@ -155,14 +158,14 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 			if !evtToSign.CheckID() {
 				return fmt.Errorf("event to be signed has a broken id")
 			}
-			msg, _ = hex.DecodeString(evtToSign.ID)
+			msg = evtToSign.ID[:]
 		case common.KindGroupCommit:
 			if err := groupCommitment.DecodeHex(evt.Content); err != nil {
 				return fmt.Errorf("failed to decode received commitment: %w", err)
 			}
 		}
 
-		if len(msg) == 32 && groupCommitment[0] != nil {
+		if groupCommitment[0] != nil {
 			break
 		}
 	}
@@ -177,7 +180,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan *nostr.Event)
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindPartialSignature,
 		Content:   partialSig.Hex(),
-		Tags:      nostr.Tags{{"e", sessionId}, {"p", cfg.PublicKey.X.String()}},
+		Tags:      nostr.Tags{{"e", sessionId.Hex()}, {"p", cfg.PublicKey.X.String()}},
 	})
 	log.Debug().Msgf("[signer] signed %x for %x", msg, *cfg.PublicKey.X.Bytes())
 

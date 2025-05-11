@@ -9,18 +9,18 @@ import (
 	"slices"
 	"sync"
 
+	"fiatjaf.com/nostr"
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/mailru/easyjson"
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/puzpuzpuz/xsync/v3"
 )
 
 var (
-	onlineSigners                = xsync.NewMapOf[string, int]()
-	groupContextsByHandlerPubKey = xsync.NewMapOf[string, *GroupContext]()
-	signingSessions              = xsync.NewMapOf[string, Session]()
+	onlineSigners                = xsync.NewMapOf[nostr.PubKey, int]()
+	groupContextsByHandlerPubKey = xsync.NewMapOf[nostr.PubKey, *GroupContext]()
+	signingSessions              = xsync.NewMapOf[nostr.ID, Session]()
 	lambdaRegistry               = make(frost.LambdaRegistry)
 	lambdaRegistryLock           = sync.Mutex{}
 )
@@ -30,20 +30,20 @@ type GroupContext struct {
 }
 
 type Session struct {
-	chosenSigners map[string]common.Signer
-	ch            chan *nostr.Event
+	chosenSigners map[nostr.PubKey]common.Signer
+	ch            chan nostr.Event
 }
 
-func (kuc *GroupContext) GetPublicKey(ctx context.Context) (string, error) {
+func (kuc *GroupContext) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
 	return kuc.PubKey, nil
 }
 
 func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) error {
-	ipk, _ := hex.DecodeString("02" + kuc.PubKey)
+	ipk, _ := hex.DecodeString("02" + kuc.PubKey.Hex())
 	pubkey, _ := btcec.ParseJacobian(ipk)
 
 	// signers that are online and that we have chosen to participate in this round
-	chosenSigners := make(map[string]common.Signer, kuc.Threshold)
+	chosenSigners := make(map[nostr.PubKey]common.Signer, kuc.Threshold)
 
 	cfg := &frost.Configuration{
 		Threshold:    int(kuc.Threshold),
@@ -68,7 +68,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	// step-1 (send): initialize each participant.
 	//
 	// this should cause the signers to reply with their nonces commits and then with their signatures.
-	confEvt := &nostr.Event{
+	confEvt := nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindConfiguration,
 		Content:   cfg.Hex(),
@@ -76,27 +76,27 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	}
 	i := 0
 	for _, signer := range chosenSigners {
-		confEvt.Tags[i] = nostr.Tag{"p", signer.PeerPubKey}
+		confEvt.Tags[i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
 		i++
 	}
-	confEvt.Sign(s.PrivateKey)
+	confEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(confEvt)
 
 	// each signing session is identified by this initial event's id
 	sessionId := confEvt.ID
-	ch := make(chan *nostr.Event)
+	ch := make(chan nostr.Event)
 	signingSessions.Store(sessionId, Session{
 		ch:            ch,
 		chosenSigners: chosenSigners,
 	})
 
-	log.Debug().Str("session", sessionId).Str("user", cfg.PublicKey.X.String()).
-		Strs("signers", slices.Collect(maps.Keys(chosenSigners))).
+	log.Debug().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).
+		Any("signers", slices.Collect(maps.Keys(chosenSigners))).
 		Msg("starting signing session")
 
 	// step-2 (receive): get all pre-commit nonces from signers
-	commitments := make(map[string]frost.Commitment, len(chosenSigners))
-	missing := make(map[string]struct{}, len(chosenSigners))
+	commitments := make(map[nostr.PubKey]frost.Commitment, len(chosenSigners))
+	missing := make(map[nostr.PubKey]struct{}, len(chosenSigners))
 	for pubkey := range chosenSigners {
 		missing[pubkey] = struct{}{}
 	}
@@ -111,7 +111,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			}
 
 			if _, ok := chosenSigners[evt.PubKey]; !ok {
-				log.Warn().Str("pubkey", evt.PubKey).Str("session", sessionId).
+				log.Warn().Str("pubkey", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
 					Msg("got commit from unrelated signer")
 				continue
 			}
@@ -131,50 +131,50 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	}
 
 	// prepare event to be signed so we have our msg hash
-	event.PubKey = hex.EncodeToString(cfg.PublicKey.X.Bytes()[:])
+	event.PubKey = *cfg.PublicKey.X.Bytes()
 	msg := sha256.Sum256(event.Serialize())
-	event.ID = hex.EncodeToString(msg[:])
+	event.ID = msg
 
 	// prepare aggregated group commitment and finalNonce
 	groupCommitment, bindingCoefficient, finalNonce := cfg.ComputeGroupCommitment(
 		slices.Collect(maps.Values(commitments)), msg[:])
 
 	// step-3 (send): group commits and send the result to signers
-	groupCommitEvt := &nostr.Event{
+	groupCommitEvt := nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindGroupCommit,
 		Content:   groupCommitment.Hex(),
 		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 	}
-	groupCommitEvt.Tags[0] = nostr.Tag{"e", sessionId}
+	groupCommitEvt.Tags[0] = nostr.Tag{"e", sessionId.Hex()}
 	i = 0
 	for _, signer := range chosenSigners {
-		groupCommitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
+		groupCommitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
 		i++
 	}
-	groupCommitEvt.Sign(s.PrivateKey)
+	groupCommitEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(groupCommitEvt)
 
 	// step-4 (send): send event to be signed
 	jevt, _ := easyjson.Marshal(event)
-	evtEvt := &nostr.Event{
+	evtEvt := nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindEventToBeSigned,
 		Content:   string(jevt),
 		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
 	}
-	evtEvt.Tags[0] = nostr.Tag{"e", sessionId}
+	evtEvt.Tags[0] = nostr.Tag{"e", sessionId.Hex()}
 	i = 0
 	for _, signer := range chosenSigners {
-		evtEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey}
+		evtEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
 		i++
 	}
-	evtEvt.Sign(s.PrivateKey)
+	evtEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(evtEvt)
 
 	// step-5 (receive): get partial signature from each participant
 	partialSigs := make([]frost.PartialSignature, len(chosenSigners))
-	missing = make(map[string]struct{}, len(chosenSigners))
+	missing = make(map[nostr.PubKey]struct{}, len(chosenSigners))
 	for pubkey := range chosenSigners {
 		missing[pubkey] = struct{}{}
 	}
@@ -190,7 +190,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			}
 
 			if _, ok := chosenSigners[evt.PubKey]; !ok {
-				log.Warn().Str("pubkey", evt.PubKey).Str("session", sessionId).
+				log.Warn().Str("pubkey", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
 					Msg("got partial signature from unrelated signer")
 				continue
 			}
@@ -215,7 +215,8 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 			}
 			lambdaRegistryLock.Unlock()
 
-			log.Debug().Str("signer", evt.PubKey).Str("session", sessionId).Msg("got good partial signature")
+			log.Debug().Str("signer", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
+				Msg("got good partial signature")
 			partialSigs[i] = partialSig
 			i++
 		}
@@ -231,14 +232,14 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		return fmt.Errorf("failed to aggregate signatures: %w", err)
 	}
 
-	event.Sig = hex.EncodeToString(sig.Serialize())
+	event.Sig = [64]byte(sig.Serialize())
 	return nil
 }
 
 func (kuc *GroupContext) Encrypt(
 	ctx context.Context,
 	plaintext string,
-	recipientPublicKey string,
+	recipientPublicKey nostr.PubKey,
 ) (base64ciphertext string, err error) {
 	return "", fmt.Errorf("not implemented")
 }
@@ -246,22 +247,20 @@ func (kuc *GroupContext) Encrypt(
 func (kuc *GroupContext) Decrypt(
 	ctx context.Context,
 	base64ciphertext string,
-	senderPublicKey string,
+	senderPublicKey nostr.PubKey,
 ) (plaintext string, err error) {
 	return "", fmt.Errorf("not implemented")
 }
 
-func handleSignerStuff(ctx context.Context, evt *nostr.Event) {
-	if !slices.Contains([]int{common.KindCommit, common.KindPartialSignature}, evt.Kind) {
-		return
-	}
-
-	eTag := evt.Tags.GetFirst([]string{"e", ""})
+func handleSignerStuff(ctx context.Context, evt nostr.Event) {
+	eTag := evt.Tags.Find("e")
 	if eTag == nil {
 		return
 	}
-
-	sessionId := (*eTag)[1]
+	sessionId, err := nostr.IDFromHex(eTag[1])
+	if err != nil {
+		return
+	}
 
 	if session, ok := signingSessions.Load(sessionId); ok {
 		if _, ok := session.chosenSigners[evt.PubKey]; ok {

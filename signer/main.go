@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fiatjaf/eventstore"
-	"github.com/fiatjaf/eventstore/badger"
-	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/keyer"
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
+	"fiatjaf.com/nostr/eventstore/badger"
+	"fiatjaf.com/nostr/keyer"
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v3"
 )
 
 var (
-	kr       nostr.Keyer
-	dir      string
-	log      = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
-	pool     *nostr.SimplePool
-	eventsdb eventstore.RelayWrapper
+	kr    nostr.Keyer
+	dir   string
+	log   = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	pool  *nostr.Pool
+	store eventstore.Store
 )
 
 func main() {
@@ -55,20 +55,15 @@ var app = &cli.Command{
 	Action: func(ctx context.Context, c *cli.Command) error {
 		var err error
 
-		pool = nostr.NewSimplePool(context.Background(),
-			nostr.WithAuthHandler(
-				func(ctx context.Context, ie nostr.RelayEvent) error {
-					return kr.SignEvent(ctx, ie.Event)
-				},
-			),
-		)
+		pool = nostr.NewPool(nostr.PoolOptions{
+			AuthHandler: kr.SignEvent,
+		})
 
-		store := &badger.BadgerBackend{Path: c.String("db")}
+		store = &badger.BadgerBackend{Path: c.String("db")}
 		err = store.Init()
 		if err != nil {
 			return fmt.Errorf("failed to open db at %s: %w", c.String("db"), err)
 		}
-		eventsdb = eventstore.RelayWrapper{Store: store}
 
 		kr, err = keyer.New(ctx, pool, c.String("sec"), nil)
 		if err != nil {

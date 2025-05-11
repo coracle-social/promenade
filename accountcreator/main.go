@@ -2,23 +2,22 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"slices"
 
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/keyer"
+	"fiatjaf.com/nostr/nip13"
 	"fiatjaf.com/promenade/common"
 	"fiatjaf.com/promenade/frost"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/keyer"
-	"github.com/nbd-wtf/go-nostr/nip13"
 	"github.com/urfave/cli/v3"
 )
 
 var (
 	dir  string
-	pool = nostr.NewSimplePool(context.Background())
+	pool = nostr.NewPool(nostr.PoolOptions{})
 )
 
 func main() {
@@ -61,7 +60,14 @@ var create = &cli.Command{
 	Action: func(ctx context.Context, c *cli.Command) error {
 		fmt.Fprintf(os.Stderr, ". preparing stuff\n")
 
-		signerPubkeys := c.StringSlice("signer")
+		signerPubkeys := make([]nostr.PubKey, 0, 6)
+		for _, pkh := range c.StringSlice("signer") {
+			pk, err := nostr.PubKeyFromHex(pkh)
+			if err != nil {
+				return fmt.Errorf("invalid pubkey '%s': %w", pkh, err)
+			}
+			signerPubkeys = append(signerPubkeys, pk)
+		}
 		threshold := int(c.Uint("threshold"))
 		coordinator := nostr.NormalizeURL(c.String("coordinator"))
 
@@ -76,27 +82,27 @@ var create = &cli.Command{
 		ar := common.AccountRegistration{
 			Threshold:     threshold,
 			Signers:       make([]common.Signer, len(signerPubkeys)),
-			HandlerSecret: nostr.GeneratePrivateKey(),
+			HandlerSecret: nostr.Generate(),
 		}
 
-		sec := c.String("sec")
-		secret := new(btcec.ModNScalar)
-		secbytes, err := hex.DecodeString(sec)
+		sec, err := nostr.SecretKeyFromHex(c.String("sec"))
 		if err != nil {
 			return fmt.Errorf("invalid sec")
 		}
-		secret.SetByteSlice(secbytes)
-		kr, _ := keyer.NewPlainKeySigner(sec)
+		secret := new(btcec.ModNScalar)
+		secret.SetBytes((*[32]byte)(&sec))
+		kr := keyer.NewPlainKeySigner(sec)
 		pub, _ := kr.GetPublicKey(ctx)
 
 		fmt.Fprintf(os.Stderr, ". grabbing their inbox relays\n")
 
-		inboxes := make(map[string][]string, len(signerPubkeys)+1)
-		for evt := range pool.SubManyEose(ctx, common.IndexRelays, nostr.Filters{
-			{Kinds: []int{10002}, Authors: append(signerPubkeys, pub)},
-		}) {
+		inboxes := make(map[nostr.PubKey][]string, len(signerPubkeys)+1)
+		for evt := range pool.FetchMany(ctx, common.IndexRelays, nostr.Filter{
+			Kinds:   []nostr.Kind{10002},
+			Authors: append(signerPubkeys, pub),
+		}, nostr.SubscriptionOptions{}) {
 			inbox := make([]string, 0, len(evt.Tags))
-			for _, tag := range evt.Tags.All([]string{"r", ""}) {
+			for tag := range evt.Tags.FindAll("r") {
 				if len(tag) == 2 || tag[2] == "read" {
 					inbox = append(inbox, tag[1])
 				}
@@ -107,35 +113,38 @@ var create = &cli.Command{
 		fmt.Fprintf(os.Stderr, ". sharding key\n")
 
 		shards, agg, _ := frost.TrustedKeyDeal(secret, ar.Threshold, len(ar.Signers))
-		if agg.X.String() != pub {
+		if *agg.X.Bytes() != pub {
 			return fmt.Errorf("the split went wrong")
 		}
 
 		// gather replies from the shards we're sending right now
 		fmt.Fprintf(os.Stderr, ". listening for responses\n")
-		acks := make([]string, 0, len(signerPubkeys))
+		acks := make([]nostr.PubKey, 0, len(signerPubkeys))
 		ourReadRelays, _ := inboxes[pub]
 		if len(ourReadRelays) == 0 {
 			return fmt.Errorf("we need some read relays first")
 		}
 		ack := make(chan struct{})
 
-		shardsSentEventId := make(map[string]struct{})
+		shardsSentEventId := make(map[nostr.ID]struct{})
 
 		go func() {
-			for evt := range pool.SubMany(ctx, ourReadRelays, nostr.Filters{
-				{
-					Kinds: []int{common.KindShardACK},
-					Tags: nostr.TagMap{
-						"p": []string{pub},
-					},
+			for evt := range pool.SubscribeMany(ctx, ourReadRelays, nostr.Filter{
+				Kinds: []nostr.Kind{common.KindShardACK},
+				Tags: nostr.TagMap{
+					"p": []string{pub.Hex()},
 				},
-			}) {
-				eTag := evt.Tags.GetFirst([]string{"e", ""})
+			}, nostr.SubscriptionOptions{}) {
+				eTag := evt.Tags.Find("e")
 				if eTag == nil {
 					continue
 				}
-				if _, isShardSent := shardsSentEventId[(*eTag)[1]]; !isShardSent {
+				id, err := nostr.IDFromHex(eTag[1])
+				if err != nil {
+					continue
+				}
+
+				if _, isShardSent := shardsSentEventId[id]; !isShardSent {
 					continue
 				}
 
@@ -153,9 +162,6 @@ var create = &cli.Command{
 			signer := signerPubkeys[s]
 			fmt.Fprintf(os.Stderr, ". sending shard to %s\n", signer)
 
-			if !nostr.IsValidPublicKey(signer) {
-				return fmt.Errorf("invalid key %s", signer)
-			}
 			ar.Signers[s].PeerPubKey = signer
 			ar.Signers[s].Shard = shard.PublicKeyShard
 
@@ -173,7 +179,7 @@ var create = &cli.Command{
 				Kind:      common.KindShard,
 				Content:   ciphertext,
 				Tags: nostr.Tags{
-					{"p", signer},
+					{"p", signer.Hex()},
 					{"coordinator", coordinator},
 				},
 				PubKey: pub,
@@ -214,7 +220,7 @@ var create = &cli.Command{
 			}
 		}
 
-		fmt.Printf("bunker://%s?relay=%s\n", ar.HandlerPubKey(), coordinator)
+		fmt.Printf("bunker://%s?relay=%s\n", ar.HandlerSecret.Public(), coordinator)
 
 		return nil
 	},

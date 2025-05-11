@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"strconv"
 
+	"fiatjaf.com/nostr"
 	"fiatjaf.com/promenade/frost"
-	"github.com/nbd-wtf/go-nostr"
 )
 
 type AccountRegistration struct {
 	// aggregated pubkey
-	PubKey string
+	PubKey nostr.PubKey
 
 	// this is the keypair the coordinator will use to handle signing requests from clients
-	HandlerSecret string
+	HandlerSecret nostr.SecretKey
 
 	Threshold int
 	Signers   []Signer // len() == MaxSigners
@@ -23,17 +23,12 @@ type AccountRegistration struct {
 
 type Signer struct {
 	// Permanent public key of the signer, unrelated to FROST
-	PeerPubKey string
+	PeerPubKey nostr.PubKey
 
 	Shard frost.PublicKeyShard
 }
 
-func (a AccountRegistration) HandlerPubKey() string {
-	pk, _ := nostr.GetPublicKey(a.HandlerSecret)
-	return pk
-}
-
-func (a *AccountRegistration) Decode(evt *nostr.Event) error {
+func (a *AccountRegistration) Decode(evt nostr.Event) error {
 	if evt.Kind != KindAccountRegistration {
 		return fmt.Errorf("wrong kind %d, expected %d", evt.Kind, KindAccountRegistration)
 	}
@@ -43,44 +38,46 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 
 	// the handler secret key is also created by the client and the coordinator is
 	//   merely informed about it
-	if tag := evt.Tags.GetFirst([]string{"handlersecret", ""}); tag == nil {
+	if tag := evt.Tags.Find("handlersecret"); tag == nil {
 		return fmt.Errorf("missing 'handlersecret' tag")
 	} else {
-		a.HandlerSecret = (*tag)[1]
-		handlerPubKey, err := nostr.GetPublicKey(a.HandlerSecret)
+		var err error
+		a.HandlerSecret, err = nostr.SecretKeyFromHex(tag[1])
 		if err != nil {
-			return fmt.Errorf("'handlersecret' ('%s') is not a valid secret key", (*tag)[1])
+			return fmt.Errorf("invalid 'handlersecret': %w", err)
 		}
 
-		if tag := evt.Tags.GetFirst([]string{"h", ""}); tag == nil {
+		handlerPubKey := nostr.GetPublicKey(a.HandlerSecret)
+		if tag := evt.Tags.Find("h"); tag == nil {
 			return fmt.Errorf("missing 'h' tag")
-		} else if handlerPubKey != (*tag)[1] {
+		} else if handlerPubKey.Hex() != tag[1] {
 			return fmt.Errorf("'h' tag pubkey doesn't match 'handlersecret'")
 		}
 	}
 
-	if tag := evt.Tags.GetFirst([]string{"threshold", ""}); tag == nil {
+	if tag := evt.Tags.Find("threshold"); tag == nil {
 		return fmt.Errorf("missing 'threshold' tag")
 	} else {
 		var err error
-		a.Threshold, err = strconv.Atoi((*tag)[1])
+		a.Threshold, err = strconv.Atoi(tag[1])
 		if err != nil || a.Threshold <= 0 || a.Threshold > 20 {
-			return fmt.Errorf("'threshold' ('%s') is not a valid number", (*tag)[1])
+			return fmt.Errorf("'threshold' ('%s') is not a valid number", tag[1])
 		}
 	}
 
 	// each signer is a different 'p' tag
 	a.Signers = make([]Signer, 0, a.Threshold*2)
-	for _, tag := range evt.Tags.All([]string{"p"}) {
+	for tag := range evt.Tags.FindAll("p") {
 		if len(tag) != 3 {
 			return fmt.Errorf("invalid signer tag length: 3 expected, got %d", len(tag))
 		}
-		if !nostr.IsValidPublicKey(tag[1]) {
+		pk, err := nostr.PubKeyFromHex(tag[1])
+		if err != nil {
 			return fmt.Errorf("invalid tag: %v", tag)
 		}
 
 		signer := Signer{
-			PeerPubKey: tag[1],
+			PeerPubKey: pk,
 		}
 		if err := signer.Shard.DecodeHex(tag[2]); err != nil {
 			return fmt.Errorf("invalid encoded shard '%s': %w", tag[2], err)
@@ -99,10 +96,10 @@ func (a *AccountRegistration) Decode(evt *nostr.Event) error {
 func (a AccountRegistration) Encode() nostr.Event {
 	tags := make(nostr.Tags, 3, 3+len(a.Signers))
 	tags[0] = nostr.Tag{"threshold", strconv.Itoa(a.Threshold)}
-	tags[1] = nostr.Tag{"handlersecret", a.HandlerSecret}
-	tags[2] = nostr.Tag{"h", a.HandlerPubKey()}
+	tags[1] = nostr.Tag{"handlersecret", a.HandlerSecret.Hex()}
+	tags[2] = nostr.Tag{"h", a.HandlerSecret.Public().Hex()}
 	for _, signer := range a.Signers {
-		tags = append(tags, nostr.Tag{"p", signer.PeerPubKey, signer.Shard.Hex()})
+		tags = append(tags, nostr.Tag{"p", signer.PeerPubKey.Hex(), signer.Shard.Hex()})
 	}
 
 	return nostr.Event{

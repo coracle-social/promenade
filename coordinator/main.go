@@ -1,18 +1,22 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"iter"
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/eventstore"
+	"fiatjaf.com/nostr/eventstore/badger"
+	"fiatjaf.com/nostr/khatru"
+	"fiatjaf.com/promenade/common"
 	_ "github.com/a-h/templ"
-	"github.com/fiatjaf/eventstore"
-	"github.com/fiatjaf/eventstore/badger"
-	"github.com/fiatjaf/khatru"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/nbd-wtf/go-nostr"
 	"github.com/rs/cors"
 	"github.com/rs/zerolog"
 )
@@ -22,8 +26,8 @@ type Settings struct {
 	Domain  string `envconfig:"DOMAIN" default:"localhost"`
 	SchemeS string
 
-	PrivateKey string `envconfig:"SECRET_KEY" required:"true"`
-	PublicKey  string
+	SecretKeyHex string `envconfig:"SECRET_KEY" required:"true"`
+	SecretKey    nostr.SecretKey
 
 	EventstorePath string `envconfig:"DB_PATH" default:"/tmp/promenade-eventstore"`
 }
@@ -35,11 +39,10 @@ var static embed.FS
 var index []byte
 
 var (
-	s        Settings
-	rw       nostr.RelayStore
-	log      = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
-	relay    = khatru.NewRelay()
-	eventsdb eventstore.RelayWrapper
+	s     Settings
+	db    eventstore.Store
+	log   = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	relay = khatru.NewRelay()
 )
 
 func main() {
@@ -48,40 +51,51 @@ func main() {
 		log.Fatal().Err(err).Msg("couldn't process envconfig")
 		return
 	}
-	s.PublicKey, _ = nostr.GetPublicKey(s.PrivateKey)
+	s.SecretKey, err = nostr.SecretKeyFromHex(s.SecretKeyHex)
+	if err != nil {
+		log.Fatal().Err(err).Msg("invalid SECRET_KEY")
+		return
+	}
+
 	if strings.Count(s.Domain, ".") < 3 && s.Domain != "localhost" {
 		s.SchemeS = "s"
 	}
 
-	db := &badger.BadgerBackend{Path: s.EventstorePath}
+	// nip46 dynamic signer setup
+	nip46Signer.Init()
+
+	// database
+	db = &badger.BadgerBackend{Path: s.EventstorePath}
 	if err := db.Init(); err != nil {
 		log.Fatal().Err(err).Str("path", s.EventstorePath).Msg("failed to initialize events db")
 		return
 	}
-	eventsdb = eventstore.RelayWrapper{Store: db}
 
+	// relay setup
 	relay.Info.Name = "promenade relay"
 	relay.Info.Description = "a relay that acts as nip-46 provider for multisignature conglomerates"
-	relay.Info.PubKey = s.PublicKey
+	relay.Info.PubKey = s.SecretKey.Public()
 
-	relay.StoreEvent = append(relay.StoreEvent, db.SaveEvent)
-	relay.QueryEvents = append(relay.QueryEvents, db.QueryEvents)
-	relay.DeleteEvent = append(relay.DeleteEvent, db.DeleteEvent)
+	relay.StoreEvent = func(ctx context.Context, event nostr.Event) error {
+		return db.SaveEvent(event)
+	}
+	relay.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
+		return db.QueryEvents(filter, 400)
+	}
+	relay.DeleteEvent = func(ctx context.Context, id nostr.ID) error {
+		return db.DeleteEvent(id)
+	}
 
-	relay.RejectEvent = append(relay.RejectEvent,
-		filterOutEverythingExceptWhatWeWant,
-	)
-	relay.RejectFilter = append(relay.RejectFilter,
-		veryPrivateFiltering,
-		keepTrackOfWhoIsListening,
-	)
-	relay.OnEphemeralEvent = append(relay.OnEphemeralEvent,
-		handleNIP46Request,
-		handleSignerStuff,
-	)
-	relay.OnEventSaved = append(relay.OnEventSaved,
-		handleCreate,
-	)
+	relay.OnEvent = filterOutEverythingExceptWhatWeWant
+	relay.OnRequest = handleRequest
+	relay.OnEphemeralEvent = func(ctx context.Context, event nostr.Event) {
+		if event.Kind == nostr.KindNostrConnect {
+			handleNIP46Request(ctx, event)
+		} else if slices.Contains([]nostr.Kind{common.KindCommit, common.KindPartialSignature}, event.Kind) {
+			handleSignerStuff(ctx, event)
+		}
+	}
+	relay.OnEventSaved = handleCreate
 	mux := relay.Router()
 
 	// routes

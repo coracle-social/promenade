@@ -3,17 +3,18 @@ package main
 import (
 	"context"
 
+	"fiatjaf.com/nostr"
 	"fiatjaf.com/promenade/common"
-	"github.com/nbd-wtf/go-nostr"
 )
 
-func filterOutEverythingExceptWhatWeWant(ctx context.Context, evt *nostr.Event) (reject bool, msg string) {
-	if nostr.IsEphemeralKind(evt.Kind) {
+func filterOutEverythingExceptWhatWeWant(ctx context.Context, event nostr.Event) (reject bool, msg string) {
+	if event.Kind.IsEphemeral() {
+		// allow all ephemeral
 		return false, ""
 	}
-	if evt.Kind == common.KindAccountRegistration {
+	if event.Kind == common.KindAccountRegistration {
 		ar := common.AccountRegistration{}
-		if err := ar.Decode(evt); err != nil {
+		if err := ar.Decode(event); err != nil {
 			return true, "error: account registration event is malformed: " + err.Error()
 		}
 
@@ -22,7 +23,7 @@ func filterOutEverythingExceptWhatWeWant(ctx context.Context, evt *nostr.Event) 
 	return true, "blocked: this event is not accepted"
 }
 
-func handleCreate(ctx context.Context, evt *nostr.Event) {
+func handleCreate(ctx context.Context, evt nostr.Event) {
 	if evt.Kind != common.KindAccountRegistration {
 		return
 	}
@@ -33,11 +34,11 @@ func handleCreate(ctx context.Context, evt *nostr.Event) {
 		return
 	}
 
-	signers := make([]string, len(ar.Signers))
+	signers := make([]nostr.PubKey, len(ar.Signers))
 	for i, signer := range ar.Signers {
 		signers[i] = signer.PeerPubKey
 	}
-	log.Info().Str("pubkey", ar.PubKey).Strs("signers", signers).Msg("account registered")
+	log.Info().Str("pubkey", ar.PubKey.Hex()).Any("signers", signers).Msg("account registered")
 
 	// let signers know we have this registered here
 	for _, signer := range ar.Signers {
@@ -45,11 +46,11 @@ func handleCreate(ctx context.Context, evt *nostr.Event) {
 			CreatedAt: nostr.Now(),
 			Kind:      common.KindShardACK,
 			Tags: nostr.Tags{
-				nostr.Tag{"P", ar.PubKey},
-				nostr.Tag{"p", signer.PeerPubKey},
+				nostr.Tag{"P", ar.PubKey.Hex()},
+				nostr.Tag{"p", signer.PeerPubKey.Hex()},
 			},
 		}
-		ackEvt.Sign(s.PrivateKey)
-		relay.BroadcastEvent(&ackEvt)
+		ackEvt.Sign(s.SecretKey)
+		relay.BroadcastEvent(ackEvt)
 	}
 }

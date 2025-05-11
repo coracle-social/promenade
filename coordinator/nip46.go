@@ -5,38 +5,28 @@ import (
 	"fmt"
 	"time"
 
+	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/nip46"
 	"fiatjaf.com/promenade/common"
-	"github.com/nbd-wtf/go-nostr"
-	"github.com/nbd-wtf/go-nostr/nip46"
 )
 
-var nip46Signer = nip46.NewDynamicSigner(
-	func(handlerPubkey string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-		defer cancel()
-
-		res, err := eventsdb.QuerySync(ctx, nostr.Filter{
-			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
-		})
-		if err != nil {
-			return "", err
+var nip46Signer = &nip46.DynamicSigner{
+	GetHandlerSecretKey: func(handlerPubkey nostr.PubKey) (nostr.SecretKey, error) {
+		res := make([]nostr.Event, 0, 1)
+		for evt := range db.QueryEvents(nostr.Filter{Tags: nostr.TagMap{"h": []string{handlerPubkey.Hex()}}}, 100) {
+			res = append(res, evt)
 		}
 		if len(res) != 1 {
-			return "", fmt.Errorf("invalid result from 'h' query")
+			return [32]byte{}, fmt.Errorf("invalid result from 'h' query")
 		}
 
-		handlerSecret := res[0].Tags.GetFirst([]string{"h"})
-		return (*handlerSecret)[1], nil
+		handlerSecret := res[0].Tags.Find("h")
+		return nostr.SecretKeyFromHex(handlerSecret[1])
 	},
-	func(handlerPubkey string) (nostr.Keyer, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-		defer cancel()
-
-		res, err := eventsdb.QuerySync(ctx, nostr.Filter{
-			Tags: nostr.TagMap{"h": []string{handlerPubkey}},
-		})
-		if err != nil {
-			return nil, err
+	GetUserKeyer: func(handlerPubkey nostr.PubKey) (nostr.Keyer, error) {
+		res := make([]nostr.Event, 0, 1)
+		for evt := range db.QueryEvents(nostr.Filter{Tags: nostr.TagMap{"h": []string{handlerPubkey.Hex()}}}, 100) {
+			res = append(res, evt)
 		}
 		if len(res) != 1 {
 			return nil, fmt.Errorf("invalid result from 'h' query")
@@ -52,19 +42,13 @@ var nip46Signer = nip46.NewDynamicSigner(
 		})
 		return kuc, nil
 	},
-	nil,
-	func(from, secret string) bool { return false },
-	func(event nostr.Event) {
-		log.Debug().Str("id", event.ID).Str("pubkey", event.PubKey).Msg("event signed")
+	AuthorizeEncryption: func(from nostr.PubKey, secret string) bool { return false },
+	OnEventSigned: func(event nostr.Event) {
+		log.Debug().Str("id", event.ID.Hex()).Str("pubkey", event.PubKey.Hex()).Msg("event signed")
 	},
-	nil,
-)
+}
 
-func handleNIP46Request(ctx context.Context, event *nostr.Event) {
-	if event.Kind != nostr.KindNostrConnect {
-		return
-	}
-
+func handleNIP46Request(ctx context.Context, event nostr.Event) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 
@@ -75,5 +59,5 @@ func handleNIP46Request(ctx context.Context, event *nostr.Event) {
 	}
 
 	log.Debug().Stringer("request", req).Stringer("response", resp).Msg("returning response")
-	relay.BroadcastEvent(&eventResponse)
+	relay.BroadcastEvent(eventResponse)
 }
