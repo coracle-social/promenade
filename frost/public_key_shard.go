@@ -47,7 +47,7 @@ func (p PublicKeyShard) Encode() []byte {
 
 func (p *PublicKeyShard) Decode(in []byte) (int, error) {
 	if len(in) < 6+33 {
-		return 0, fmt.Errorf("too small")
+		return 0, fmt.Errorf("too small (expected length %d, got %d)", 6+33, len(in))
 	}
 
 	p.ID = int(binary.LittleEndian.Uint16(in[0:2]))

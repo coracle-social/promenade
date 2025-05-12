@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"embed"
-	"iter"
 	"net/http"
 	"os"
 	"os/signal"
@@ -76,15 +75,7 @@ func main() {
 	relay.Info.Description = "a relay that acts as nip-46 provider for multisignature conglomerates"
 	relay.Info.PubKey = s.SecretKey.Public()
 
-	relay.StoreEvent = func(ctx context.Context, event nostr.Event) error {
-		return db.SaveEvent(event)
-	}
-	relay.QueryStored = func(ctx context.Context, filter nostr.Filter) iter.Seq[nostr.Event] {
-		return db.QueryEvents(filter, 400)
-	}
-	relay.DeleteEvent = func(ctx context.Context, id nostr.ID) error {
-		return db.DeleteEvent(id)
-	}
+	relay.UseEventstore(db, 400)
 
 	relay.OnEvent = filterOutEverythingExceptWhatWeWant
 	relay.OnRequest = handleRequest

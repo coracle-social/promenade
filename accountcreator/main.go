@@ -190,19 +190,19 @@ var create = &cli.Command{
 				return fmt.Errorf("failed to add work to shard event: %w", err)
 			}
 			shardEvt.Tags = append(shardEvt.Tags, tag)
-
 			shardEvt.Sign(sec)
-
 			shardsSentEventId[shardEvt.ID] = struct{}{}
-
 			ok := false
+			errs := make([]error, len(relays))
 			for res := range pool.PublishMany(ctx, relays, shardEvt) {
 				if res.Error == nil {
 					ok = true
+				} else {
+					errs[slices.Index(relays, res.RelayURL)] = res.Error
 				}
 			}
 			if !ok {
-				return fmt.Errorf("failed to send shard to %s", signer)
+				return fmt.Errorf("failed to send shard to %s: %v", signer, errs)
 			}
 		}
 
@@ -211,16 +211,18 @@ var create = &cli.Command{
 		<-ack
 
 		// notify the coordinator
-		fmt.Fprintf(os.Stderr, ". registering on coordinator\n")
+		fmt.Fprintf(os.Stderr, ". registering on coordinator %s\n", coordinator)
 		evt := ar.Encode()
 		evt.Sign(sec)
-		for res := range pool.PublishMany(ctx, []string{c.String("coordinator")}, evt) {
+		for res := range pool.PublishMany(ctx, []string{coordinator}, evt) {
 			if res.Error != nil {
 				return fmt.Errorf("failed to notify the coordinator: %w", err)
+			} else {
+				fmt.Fprintf(os.Stderr, ". done\n")
 			}
 		}
 
-		fmt.Printf("bunker://%s?relay=%s\n", ar.HandlerSecret.Public(), coordinator)
+		fmt.Printf("bunker://%s?relay=%s\n", ar.HandlerSecret.Public().Hex(), coordinator)
 
 		return nil
 	},

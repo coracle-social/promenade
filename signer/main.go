@@ -24,7 +24,7 @@ var (
 func main() {
 	err := app.Run(context.Background(), os.Args)
 	if err != nil {
-		log.Debug().Msgf("initialization error: %s", err)
+		log.Error().Err(err).Msgf("initialization error")
 		os.Exit(1)
 	}
 }
@@ -38,9 +38,9 @@ var app = &cli.Command{
 			Required: true,
 		},
 		&cli.StringFlag{
-			Name:  "db",
+			Name:  "shards-db",
 			Usage: "path to the eventstore directory",
-			Value: "./db",
+			Value: "./shards",
 		},
 		&cli.UintFlag{
 			Name:  "min-pow",
@@ -53,41 +53,48 @@ var app = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, c *cli.Command) error {
-		var err error
-
-		pool = nostr.NewPool(nostr.PoolOptions{
-			AuthHandler: kr.SignEvent,
-		})
-
-		store = &badger.BadgerBackend{Path: c.String("db")}
-		err = store.Init()
+		store = &badger.BadgerBackend{Path: c.String("shards-db")}
+		err := store.Init()
 		if err != nil {
-			return fmt.Errorf("failed to open db at %s: %w", c.String("db"), err)
+			return fmt.Errorf("failed to open db at %s: %w", c.String("shards-db"), err)
 		}
 
 		kr, err = keyer.New(ctx, pool, c.String("sec"), nil)
 		if err != nil {
 			return fmt.Errorf("invalid secret key: %w", err)
 		}
-		publicKey, _ := kr.GetPublicKey(ctx)
-		log.Debug().Msgf("[] running as %s", publicKey)
 
-		signerCtx, cancelSigner := context.WithCancel(ctx)
+		pool = nostr.NewPool(nostr.PoolOptions{
+			AuthHandler: kr.SignEvent,
+		})
+
+		publicKey, _ := kr.GetPublicKey(ctx)
+		log.Info().Msgf("[] running as %s", publicKey)
+
+		signerCtx, cancelSigner := context.WithCancelCause(ctx)
 
 		restartSigner := func() {
 			log.Info().Msg("[signer] restarting signer...")
-			cancelSigner()
-			signerCtx, cancelSigner = context.WithCancel(ctx)
-			go runSigner(signerCtx)
+			cancelSigner(fmt.Errorf("restarted"))
+			signerCtx, cancelSigner = context.WithCancelCause(ctx)
+			go func() {
+				err = runSigner(signerCtx)
+			}()
 		}
 
+		acceptorDone := make(chan struct{})
 		if relays := c.StringSlice("accept-relay"); len(relays) > 0 {
-			go runAcceptor(ctx, relays, c.Uint("min-pow"), restartSigner)
+			go func() {
+				runAcceptor(ctx, relays, c.Uint("min-pow"), restartSigner)
+				close(acceptorDone)
+			}()
 		} else {
+			close(acceptorDone)
 			log.Warn().Msg("not accepting new key shards because --accept-relay wasn't set")
 		}
 
-		runSigner(signerCtx)
-		return nil
+		err = runSigner(signerCtx)
+		<-acceptorDone
+		return err
 	},
 }

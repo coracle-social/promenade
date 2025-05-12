@@ -91,8 +91,8 @@ func computeBindingCoefficient(
 	for i, part := range participants {
 		new(btcec.ModNScalar).SetInt(uint32(part)).PutBytesUnchecked(preimage[32+4+i*32 : 32+4+(i+1)*32])
 	}
-	writePointTo(preimage[32+4+len(participants)*32+32:32+4+len(participants)*32+32+33], aggNonce[0])
-	copy(preimage[32+4+len(participants)*32+32+33:], message)
+	writePointTo(preimage[32+4+32*len(participants):32+4+32*len(participants)+33], aggNonce[0])
+	copy(preimage[32+4+32*len(participants)+33:], message)
 
 	hash := chainhash.TaggedHash([]byte("frost/binding"), preimage)
 	s := new(btcec.ModNScalar)

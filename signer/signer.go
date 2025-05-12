@@ -18,7 +18,9 @@ var sessions = xsync.NewMapOf[nostr.ID, chan nostr.Event]()
 
 var lambdaRegistry = make(frost.LambdaRegistry)
 
-func runSigner(ctx context.Context) {
+var signerEndedEarly = fmt.Errorf("signer ended early")
+
+func runSigner(ctx context.Context) error {
 	ourPubkey, _ := kr.GetPublicKey(ctx)
 
 	filter := nostr.Filter{
@@ -54,9 +56,9 @@ func runSigner(ctx context.Context) {
 		ngroups++
 	}
 
-	mainEventStream := pool.BatchedSubManyEose(ctx, dfs, nostr.SubscriptionOptions{})
+	mainEventStream := pool.BatchedSubscribeMany(ctx, dfs, nostr.SubscriptionOptions{})
 
-	log.Debug().Msgf("[signer] started waiting for sign requests from %d key groups", ngroups)
+	log.Info().Msgf("[signer] started waiting to sign requests from %d key groups", ngroups)
 	for ie := range mainEventStream {
 		evt := ie.Event
 
@@ -67,7 +69,7 @@ func runSigner(ctx context.Context) {
 			go func() {
 				err := startSession(ctx, ie.Relay, ch)
 				if err != nil {
-					log.Debug().Msgf("failed to start session: %s", err)
+					log.Warn().Err(err).Msg("[signer] failed to start session")
 				}
 			}()
 
@@ -75,12 +77,12 @@ func runSigner(ctx context.Context) {
 		case common.KindGroupCommit, common.KindEventToBeSigned:
 			eTag := evt.Tags.Find("e")
 			if eTag == nil {
-				return
+				return fmt.Errorf("coordinator sent a buggy event without \"e\": %s", evt)
 			}
 
 			id, err := nostr.IDFromHex(eTag[1])
 			if err != nil {
-				return
+				return fmt.Errorf("coordinator sent an event with an invalid \"e\": %s", evt)
 			}
 
 			if ch, ok := sessions.Load(id); ok {
@@ -88,18 +90,20 @@ func runSigner(ctx context.Context) {
 			}
 		}
 	}
+
+	return signerEndedEarly
 }
 
 func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) error {
 	sendToCoordinator := func(evt *nostr.Event) {
 		if err := kr.SignEvent(ctx, evt); err != nil {
-			log.Debug().Msgf("failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
+			log.Warn().Msgf("failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 		if err := relay.Publish(ctx, *evt); err != nil {
-			log.Debug().Msgf("failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
+			log.Warn().Msgf("failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
 			cancel()
 			return
 		}
@@ -113,12 +117,17 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		return fmt.Errorf("error decoding config: %w", err)
 	}
 
+	log.Info().Msgf("[signer] sign session started for %x", cfg.PublicKey.X.Bytes())
+
 	var res nostr.Event
+	var ok bool
 	for pk := range store.QueryEvents(nostr.Filter{Authors: []nostr.PubKey{*cfg.PublicKey.X.Bytes()}}, 100) {
 		res = pk
+		ok = true
 	}
-
-	log.Debug().Msgf("[signer] sign session started for %x", cfg.PublicKey.X.Bytes())
+	if !ok {
+		return fmt.Errorf("[signer] couldn't find a shard for %x", *cfg.PublicKey.X.Bytes())
+	}
 
 	sessionId := evt.ID
 	sessions.Store(sessionId, ch)
@@ -165,7 +174,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 			}
 		}
 
-		if groupCommitment[0] != nil {
+		if len(msg) == 32 && groupCommitment[0] != nil {
 			break
 		}
 	}
@@ -182,7 +191,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		Content:   partialSig.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId.Hex()}, {"p", cfg.PublicKey.X.String()}},
 	})
-	log.Debug().Msgf("[signer] signed %x for %x", msg, *cfg.PublicKey.X.Bytes())
+	log.Info().Msgf("[signer] signed %x for %x", msg[:], *cfg.PublicKey.X.Bytes())
 
 	return nil
 }

@@ -48,13 +48,13 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 			Tags:      tags,
 		}
 		kr.SignEvent(ctx, &rlEvt)
-		log.Debug().Msgf("[acceptor] updating our relay list to %v (from %v)", relayURLs, ourInbox)
+		log.Info().Msgf("[acceptor] updating our relay list to %v (from %v)", relayURLs, ourInbox)
 		pool.PublishMany(ctx, common.IndexRelays, rlEvt)
 		ourInbox = relayURLs
 	}
 
 	// listen for incoming shards
-	log.Debug().Msgf("[acceptor] listening for new shards at %v", ourInbox)
+	log.Info().Msgf("[acceptor] listening for new shards at %v", ourInbox)
 	for shardEvt := range pool.SubscribeMany(ctx, ourInbox, nostr.Filter{
 		Kinds: []nostr.Kind{common.KindShard},
 		Tags: nostr.TagMap{
@@ -145,7 +145,7 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	}
 	success := false
 	errs := make(map[string]string, len(theirInbox))
-	log.Debug().Msgf("[acceptor] sending ack to %v", theirInbox)
+	log.Info().Msgf("[acceptor] sending ack to %v", theirInbox)
 	for res := range pool.PublishMany(ctx, theirInbox, ackEvt) {
 		if res.Error == nil {
 			success = true
@@ -170,15 +170,19 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 		Msgf("[acceptor] got ack from coordinator")
 
 	// append to our data store (delete previous entries for the same pubkey)
-	results := store.QueryEvents(nostr.Filter{
+	oldShardIds := make([]nostr.ID, 0, 4)
+	for old := range store.QueryEvents(nostr.Filter{
 		Kinds:   []nostr.Kind{common.KindStoredShard},
 		Authors: []nostr.PubKey{shardEvt.PubKey},
-	}, 100)
+	}, 100) {
+		oldShardIds = append(oldShardIds, old.ID)
+	}
 
 	// store now just to prevent losing data in between
 	storedShard := nostr.Event{
-		Kind:   common.KindStoredShard,
-		PubKey: shardEvt.PubKey,
+		CreatedAt: nostr.Now(),
+		Kind:      common.KindStoredShard,
+		PubKey:    shardEvt.PubKey,
 		Tags: append(
 			shardEvt.Tags,
 			nostr.Tag{""},
@@ -191,8 +195,8 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	}
 
 	// and only now delete the old stuff
-	for oldShardEvt := range results {
-		if err := store.DeleteEvent(oldShardEvt.ID); err != nil {
+	for _, oldId := range oldShardIds {
+		if err := store.DeleteEvent(oldId); err != nil {
 			panic(err)
 		}
 	}

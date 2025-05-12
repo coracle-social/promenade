@@ -16,11 +16,12 @@ var nip46Signer = &nip46.DynamicSigner{
 		for evt := range db.QueryEvents(nostr.Filter{Tags: nostr.TagMap{"h": []string{handlerPubkey.Hex()}}}, 100) {
 			res = append(res, evt)
 		}
+
 		if len(res) != 1 {
 			return [32]byte{}, fmt.Errorf("invalid result from 'h' query")
 		}
 
-		handlerSecret := res[0].Tags.Find("h")
+		handlerSecret := res[0].Tags.Find("handlersecret")
 		return nostr.SecretKeyFromHex(handlerSecret[1])
 	},
 	GetUserKeyer: func(handlerPubkey nostr.PubKey) (nostr.Keyer, error) {
@@ -44,7 +45,7 @@ var nip46Signer = &nip46.DynamicSigner{
 	},
 	AuthorizeEncryption: func(from nostr.PubKey, secret string) bool { return false },
 	OnEventSigned: func(event nostr.Event) {
-		log.Debug().Str("id", event.ID.Hex()).Str("pubkey", event.PubKey.Hex()).Msg("event signed")
+		log.Info().Str("id", event.ID.Hex()).Str("pubkey", event.PubKey.Hex()).Msg("event signed")
 	},
 }
 
@@ -58,6 +59,6 @@ func handleNIP46Request(ctx context.Context, event nostr.Event) {
 		return
 	}
 
-	log.Debug().Stringer("request", req).Stringer("response", resp).Msg("returning response")
+	log.Info().Stringer("request", req).Stringer("response", resp).Msg("returning response")
 	relay.BroadcastEvent(eventResponse)
 }

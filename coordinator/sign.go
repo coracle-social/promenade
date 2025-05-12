@@ -90,7 +90,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		chosenSigners: chosenSigners,
 	})
 
-	log.Debug().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).
+	log.Info().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).
 		Any("signers", slices.Collect(maps.Keys(chosenSigners))).
 		Msg("starting signing session")
 
@@ -211,11 +211,11 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 				lambdaRegistry,
 			); err != nil {
 				lambdaRegistryLock.Unlock()
-				return fmt.Errorf("partial signature from %s isn't good: %w", evt.PubKey, err)
+				return fmt.Errorf("partial signature from signer %s isn't good: %w", evt.PubKey, err)
 			}
 			lambdaRegistryLock.Unlock()
 
-			log.Debug().Str("signer", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
+			log.Info().Str("signer", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
 				Msg("got good partial signature")
 			partialSigs[i] = partialSig
 			i++
