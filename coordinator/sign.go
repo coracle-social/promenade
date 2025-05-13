@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/promenade/common"
@@ -89,6 +90,12 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		ch:            ch,
 		chosenSigners: chosenSigners,
 	})
+
+	defer func() {
+		// keep signing sessions for 5 minutes for debugging then delete them
+		time.Sleep(time.Minute * 5)
+		signingSessions.Delete(sessionId)
+	}()
 
 	log.Info().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).
 		Any("signers", slices.Collect(maps.Keys(chosenSigners))).
