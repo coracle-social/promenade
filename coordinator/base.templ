@@ -1,0 +1,17 @@
+package main
+
+templ base() {
+	<!DOCTYPE html>
+	<head>
+		<meta charset="utf-8"/>
+		<title>{ relay.Info.Name }</title>
+		<meta name="description" content={ relay.Info.Description }/>
+		<link rel="stylesheet" href="/static/bundle.css"/>
+	</head>
+	<body class="m-4">
+		<header class="pb-2 text-2xl">promenade coordinator</header>
+		<main>
+			{ children... }
+		</main>
+	</body>
+}

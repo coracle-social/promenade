@@ -1,0 +1,23 @@
+package main
+
+templ dashboard() {
+	@base() {
+		<div>
+			<div class="text-lg mb-1 py-1 hover:bg-stone-50">&gt; connected signers</div>
+			if onlineSigners.Size() == 0 {
+				<div class="pl-4 text-stone-700">no signers</div>
+			} else {
+				for signer, connections := range onlineSigners.Range {
+					<div class="pl-8 flex">
+						<div class="mr-2 px-1 hover:bg-stone-100">
+							{ signer.Hex() }
+						</div>
+						<div class="px-1 hover:bg-stone-100">
+							{ connections }
+						</div>
+					</div>
+				}
+			}
+		</div>
+	}
+}

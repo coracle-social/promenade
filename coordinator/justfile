@@ -1,7 +1,7 @@
 export PATH := "./node_modules/.bin:" + env_var('PATH')
 
 dev:
-    fd 'go|html|md|templ|base.css' | entr -r bash -c 'just build && godotenv ./promenade'
+    fd 'go|html|md|templ|base.css' | entr -r bash -c 'just build && godotenv ./coordinator'
 
 tailwind:
     tailwindcss -i ./base.css -o ./static/bundle.css

@@ -92,8 +92,12 @@ func main() {
 	// routes
 	mux.Handle("/static/", http.FileServer(http.FS(static)))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("content-type", "text/html")
-		w.Write(index)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		component := dashboard()
+		component.Render(r.Context(), w)
 	})
 
 	// start
