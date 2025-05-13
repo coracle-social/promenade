@@ -8,22 +8,22 @@ set pid_coord $last_pid
 trap 'kill $pid_relay $pid_coord' SIGINT SIGTERM SIGQUIT EXIT
 
 set signersk1 1000000000000000000000000000000000000000000000000000000000000001
-go run ./signer --db=/tmp/signer1 --accept-relay=localhost:11111 --sec=$signersk1 &
+go run ./signer --shards-db=/tmp/signer1 --accept-relay=localhost:11111 --sec=$signersk1 &
 set pid_signer1 $last_pid
 trap 'kill $pid_relay $pid_coord $pid_signer1' SIGINT SIGTERM SIGQUIT EXIT
 
 set signersk2 2000000000000000000000000000000000000000000000000000000000000002
-go run ./signer --db=/tmp/signer2 --accept-relay=localhost:11111 --sec=$signersk2 &
+go run ./signer --shards-db=/tmp/signer2 --accept-relay=localhost:11111 --sec=$signersk2 &
 set pid_signer2 $last_pid
 trap 'kill $pid_relay $pid_coord $pid_signer1 $pid_signer2' SIGINT SIGTERM SIGQUIT EXIT
 
 set signersk3 3000000000000000000000000000000000000000000000000000000000000003
-go run ./signer --db=/tmp/signer3 --accept-relay=localhost:11111 --sec=$signersk3 &
+go run ./signer --shards-db=/tmp/signer3 --accept-relay=localhost:11111 --sec=$signersk3 &
 set pid_signer3 $last_pid
 trap 'kill $pid_relay $pid_coord $pid_signer1 $pid_signer2 $pid_signer3' SIGINT SIGTERM SIGQUIT EXIT
 
 set signersk4 4000000000000000000000000000000000000000000000000000000000000004
-go run ./signer --db=/tmp/signer4 --accept-relay=localhost:11111 --sec=$signersk4 &
+go run ./signer --shards-db=/tmp/signer4 --accept-relay=localhost:11111 --sec=$signersk4 &
 set pid_signer4 $last_pid
 trap 'kill $pid_relay $pid_coord $pid_signer1 $pid_signer2 $pid_signer3 $pid_signer4' SIGINT SIGTERM SIGQUIT EXIT
 
