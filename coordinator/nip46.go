@@ -56,7 +56,7 @@ func handleNIP46Request(ctx context.Context, event nostr.Event) {
 
 	req, resp, eventResponse, err := nip46Signer.HandleRequest(ctx, event)
 	if err != nil {
-		log.Error().Err(err).Stringer("request", req).Msg("failed to handle request")
+		log.Warn().Err(err).Stringer("request", req).Msg("failed to handle request")
 		return
 	}
 

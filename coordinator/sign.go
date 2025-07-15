@@ -21,7 +21,7 @@ import (
 var (
 	onlineSigners                = xsync.NewMapOf[nostr.PubKey, int]()
 	groupContextsByHandlerPubKey = xsync.NewMapOf[nostr.PubKey, *GroupContext]()
-	signingSessions              = xsync.NewMapOf[nostr.ID, Session]()
+	signingSessions              = xsync.NewMapOf[nostr.ID, *Session]()
 	lambdaRegistry               = make(frost.LambdaRegistry)
 	lambdaRegistryLock           = sync.Mutex{}
 )
@@ -33,13 +33,14 @@ type GroupContext struct {
 type Session struct {
 	chosenSigners map[nostr.PubKey]common.Signer
 	ch            chan nostr.Event
+	status        string
 }
 
 func (kuc *GroupContext) GetPublicKey(ctx context.Context) (nostr.PubKey, error) {
 	return kuc.PubKey, nil
 }
 
-func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) error {
+func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err error) {
 	ipk, _ := hex.DecodeString("02" + kuc.PubKey.Hex())
 	pubkey, _ := btcec.ParseJacobian(ipk)
 
@@ -84,12 +85,19 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	// each signing session is identified by this initial event's id
 	sessionId := confEvt.ID
 	ch := make(chan nostr.Event)
-	signingSessions.Store(sessionId, Session{
+	session := &Session{
 		ch:            ch,
 		chosenSigners: chosenSigners,
-	})
+		status:        "initializing",
+	}
+	signingSessions.Store(sessionId, session)
 
 	defer func() {
+		// set status to error
+		if err != nil {
+			session.status = err.Error()
+		}
+
 		// keep signing sessions for 5 minutes for debugging then delete them
 		go func() {
 			time.Sleep(time.Minute * 5)
@@ -104,6 +112,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		Msg("starting signing session")
 
 	// step-2 (receive): get all pre-commit nonces from signers
+	session.status = "nonces"
 	commitments := make(map[nostr.PubKey]frost.Commitment, len(chosenSigners))
 	missing := make(map[nostr.PubKey]struct{}, len(chosenSigners))
 	for pubkey := range chosenSigners {
@@ -140,11 +149,13 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	}
 
 	// prepare event to be signed so we have our msg hash
+	session.status = "prepare"
 	event.PubKey = *cfg.PublicKey.X.Bytes()
 	msg := sha256.Sum256(event.Serialize())
 	event.ID = msg
 
 	// prepare aggregated group commitment and finalNonce
+	session.status = "commit"
 	groupCommitment, bindingCoefficient, finalNonce := cfg.ComputeGroupCommitment(
 		slices.Collect(maps.Values(commitments)), msg[:])
 
@@ -163,6 +174,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	relay.BroadcastEvent(groupCommitEvt)
 
 	// step-4 (send): send event to be signed
+	session.status = "event"
 	jevt, _ := easyjson.Marshal(event)
 	evtEvt := nostr.Event{
 		CreatedAt: nostr.Now(),
@@ -178,6 +190,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 	relay.BroadcastEvent(evtEvt)
 
 	// step-5 (receive): get partial signature from each participant
+	session.status = "partialsigs"
 	partialSigs := make([]frost.PartialSignature, 0, len(chosenSigners))
 	missing = make(map[nostr.PubKey]struct{}, len(chosenSigners))
 	for pubkey := range chosenSigners {
@@ -236,6 +249,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 
 aggregate:
 	// aggregate signature
+	session.status = "aggregating"
 	log.Info().Msg("aggregating")
 	sig, err := cfg.AggregateSignatures(finalNonce, partialSigs)
 	if err != nil {
@@ -243,6 +257,7 @@ aggregate:
 	}
 
 	event.Sig = [64]byte(sig.Serialize())
+	session.status = "done"
 	return nil
 }
 

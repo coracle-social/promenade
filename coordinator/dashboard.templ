@@ -10,7 +10,7 @@ templ dashboard() {
 				<table class="table-auto pl-8 text-stone-700">
 					for signer, connections := range onlineSigners.Range {
 						<tr>
-							<td class="mr-2 px-1 hover:bg-stone-100">
+							<td class="mr-2 px-1 hover:bg-stone-100" title="signer pubkey">
 								{ signer.Hex() }
 							</td>
 							<td class="px-1 hover:bg-stone-100">
@@ -29,7 +29,7 @@ templ dashboard() {
 				<table class="table-auto pl-8 text-stone-700">
 					for user, kuc := range groupContextsByHandlerPubKey.Range {
 						<tr>
-							<td class="mr-2 px-1 hover:bg-stone-100">
+							<td class="mr-2 px-1 hover:bg-stone-100 font-mono" title="aggregated public key">
 								...{ user.Hex()[52:] }
 							</td>
 							<td class="px-1 hover:bg-stone-100">
@@ -47,14 +47,19 @@ templ dashboard() {
 			} else {
 				for id, session := range signingSessions.Range {
 					<div class="pl-8 flex text-stone-700">
-						<div class="mr-2 px-1 hover:bg-stone-100">
-							...{ id.Hex()[52:] }
+						<div class="mr-2 px-1 hover:bg-stone-100 font-mono flex" title="session id">
+							<div>
+								...{ id.Hex()[52:] }
+							</div>
+							<div>
+								{ session.status }
+							</div>
 						</div>
 						<div class="px-1 hover:bg-stone-100">
 							<table class="table-auto">
 								for signer := range session.chosenSigners {
 									<tr>
-										<td>{ signer.Hex() }</td>
+										<td class="font-mono">{ signer.Hex() }</td>
 									</tr>
 								}
 							</table>

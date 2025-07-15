@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	fiatjaf.com/nostr v0.0.0-20250512152324-f9e2907a9717
-	github.com/a-h/templ v0.3.865
+	github.com/a-h/templ v0.3.906
 	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
