@@ -45,10 +45,10 @@ sleep 2
 
 set actual (nak event --sec "$bunker1" --ts '2018-05-19 03:37' | jq -r .id)
 set expected (nak event --sec $usersk1 --ts '2018-05-19 03:37' | jq -r .id)
-echo $actual
-echo $expected
+echo actual: $actual
+echo expected: $expected
 if [ "$actual" != "$expected" ]
-  exit 'failed'
+  exit 55
 end
 
 kill $pid_relay $pid_coord $pid_signer1 $pid_signer2 $pid_signer3 $pid_signer4

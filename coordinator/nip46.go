@@ -41,6 +41,7 @@ var nip46Signer = &nip46.DynamicSigner{
 		kuc, _ := groupContextsByHandlerPubKey.LoadOrCompute(handlerPubkey, func() *GroupContext {
 			return &GroupContext{ar}
 		})
+
 		return kuc, nil
 	},
 	AuthorizeEncryption: func(from nostr.PubKey, secret string) bool { return false },

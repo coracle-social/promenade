@@ -73,12 +73,10 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindConfiguration,
 		Content:   cfg.Hex(),
-		Tags:      make(nostr.Tags, len(chosenSigners)),
+		Tags:      make(nostr.Tags, 0, len(chosenSigners)),
 	}
-	i := 0
 	for _, signer := range chosenSigners {
-		confEvt.Tags[i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
-		i++
+		confEvt.Tags = append(confEvt.Tags, nostr.Tag{"p", signer.PeerPubKey.Hex()})
 	}
 	confEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(confEvt)
@@ -93,11 +91,15 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 
 	defer func() {
 		// keep signing sessions for 5 minutes for debugging then delete them
-		time.Sleep(time.Minute * 5)
-		signingSessions.Delete(sessionId)
+		go func() {
+			time.Sleep(time.Minute * 5)
+			signingSessions.Delete(sessionId)
+		}()
 	}()
 
-	log.Info().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).
+	log = log.With().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).Logger()
+
+	log.Info().
 		Any("signers", slices.Collect(maps.Keys(chosenSigners))).
 		Msg("starting signing session")
 
@@ -151,13 +153,11 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindGroupCommit,
 		Content:   groupCommitment.Hex(),
-		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
+		Tags:      make(nostr.Tags, 0, 1+len(chosenSigners)),
 	}
-	groupCommitEvt.Tags[0] = nostr.Tag{"e", sessionId.Hex()}
-	i = 0
+	groupCommitEvt.Tags = append(groupCommitEvt.Tags, nostr.Tag{"e", sessionId.Hex()})
 	for _, signer := range chosenSigners {
-		groupCommitEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
-		i++
+		groupCommitEvt.Tags = append(groupCommitEvt.Tags, nostr.Tag{"p", signer.PeerPubKey.Hex()})
 	}
 	groupCommitEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(groupCommitEvt)
@@ -168,24 +168,22 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindEventToBeSigned,
 		Content:   string(jevt),
-		Tags:      make(nostr.Tags, 1+len(chosenSigners)),
+		Tags:      make(nostr.Tags, 0, 1+len(chosenSigners)),
 	}
-	evtEvt.Tags[0] = nostr.Tag{"e", sessionId.Hex()}
-	i = 0
+	evtEvt.Tags = append(evtEvt.Tags, nostr.Tag{"e", sessionId.Hex()})
 	for _, signer := range chosenSigners {
-		evtEvt.Tags[1+i] = nostr.Tag{"p", signer.PeerPubKey.Hex()}
-		i++
+		evtEvt.Tags = append(evtEvt.Tags, nostr.Tag{"p", signer.PeerPubKey.Hex()})
 	}
 	evtEvt.Sign(s.SecretKey)
 	relay.BroadcastEvent(evtEvt)
 
 	// step-5 (receive): get partial signature from each participant
-	partialSigs := make([]frost.PartialSignature, len(chosenSigners))
+	partialSigs := make([]frost.PartialSignature, 0, len(chosenSigners))
 	missing = make(map[nostr.PubKey]struct{}, len(chosenSigners))
 	for pubkey := range chosenSigners {
 		missing[pubkey] = struct{}{}
 	}
-	i = 0
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -220,20 +218,25 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) erro
 				lambdaRegistryLock.Unlock()
 				return fmt.Errorf("partial signature from signer %s isn't good: %w", evt.PubKey, err)
 			}
-			lambdaRegistryLock.Unlock()
+			partialSigs = append(partialSigs, partialSig)
 
-			log.Info().Str("signer", evt.PubKey.Hex()).Str("session", sessionId.Hex()).
+			log.Info().
+				Int("count", len(partialSigs)).Int("need", len(chosenSigners)).
 				Msg("got good partial signature")
-			partialSigs[i] = partialSig
-			i++
-		}
 
-		if i == len(chosenSigners) {
-			break
+			if len(partialSigs) == len(chosenSigners) {
+				lambdaRegistryLock.Unlock()
+				goto aggregate
+			}
+
+			// reuse this lock to protect our signature counting
+			lambdaRegistryLock.Unlock()
 		}
 	}
 
+aggregate:
 	// aggregate signature
+	log.Info().Msg("aggregating")
 	sig, err := cfg.AggregateSignatures(finalNonce, partialSigs)
 	if err != nil {
 		return fmt.Errorf("failed to aggregate signatures: %w", err)
