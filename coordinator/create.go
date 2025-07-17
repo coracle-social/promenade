@@ -4,10 +4,16 @@ import (
 	"context"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/promenade/common"
 )
 
 func filterOutEverythingExceptWhatWeWant(ctx context.Context, event nostr.Event) (reject bool, msg string) {
+	// if this is a client we have to ratelimit otherwise they will try a million failed bunker requests
+	if event.Kind == nostr.KindNostrConnect {
+		return CheckIPLimited(khatru.GetIP(ctx)), "rate-limited: you're making too many bunker calls"
+	}
+
 	if event.Kind.IsEphemeral() {
 		// allow all ephemeral
 		return false, ""

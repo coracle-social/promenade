@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -23,9 +22,7 @@ import (
 )
 
 type Settings struct {
-	Port    string `envconfig:"PORT" default:"6363"`
-	Domain  string `envconfig:"DOMAIN" default:"localhost"`
-	SchemeS string
+	Port string `envconfig:"PORT" default:"6363"`
 
 	SecretKeyHex string `envconfig:"SECRET_KEY" required:"true"`
 	SecretKey    nostr.SecretKey
@@ -40,9 +37,10 @@ var static embed.FS
 var index []byte
 
 var (
-	s     Settings
-	db    eventstore.Store
-	log   = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	s   Settings
+	db  eventstore.Store
+	log = zerolog.New(os.Stderr).Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().
+		Timestamp().Logger()
 	relay = khatru.NewRelay()
 )
 
@@ -56,10 +54,6 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("invalid SECRET_KEY")
 		return
-	}
-
-	if strings.Count(s.Domain, ".") < 3 && s.Domain != "localhost" {
-		s.SchemeS = "s"
 	}
 
 	// nip46 dynamic signer setup
@@ -82,9 +76,7 @@ func main() {
 	relay.UseEventstore(db, 400)
 
 	relay.RejectConnection = policies.ConnectionRateLimiter(1, time.Minute*5, 100)
-	relay.OnEvent = policies.SeqEvent(
-		policies.EventIPRateLimiter(2, time.Minute*3, 10),
-		filterOutEverythingExceptWhatWeWant)
+	relay.OnEvent = filterOutEverythingExceptWhatWeWant
 	relay.OnRequest = policies.SeqRequest(
 		policies.FilterIPRateLimiter(20, time.Minute, 100),
 		handleRequest,

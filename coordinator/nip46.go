@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -88,6 +89,19 @@ var nip46Signer = &nip46.DynamicSigner{
 		}
 		ar := val.(common.AccountRegistration)
 
+		// prevent someone with a bunker url from gaining access to other bunkers or overwriting them
+		//   or doing other harmful things
+		// (the signers should be doing these same checks but we do them here too just in case)
+		if slices.Contains(common.ForbiddenKinds, event.Kind) {
+			return false
+		}
+		if event.Kind == nostr.KindClientAuthentication {
+			if tag := event.Tags.Find("challenge"); tag != nil && strings.HasPrefix(tag[1], "frostbunker:") {
+				return false
+			}
+		}
+		// ~
+
 		// get previously associated secret
 		next, done := iter.Pull(db.QueryEvents(nostr.Filter{
 			Kinds:   []nostr.Kind{26430},
@@ -108,10 +122,23 @@ var nip46Signer = &nip46.DynamicSigner{
 
 		for _, profile := range ar.Profiles {
 			if profile.Secret == secret {
-				if profile.Restrictions == nil /* if there are no restrictions all is allowed */ ||
-					(profile.Restrictions.Until > nostr.Now() /* real-time expiration is ok */ &&
-						profile.Restrictions.Until > event.CreatedAt /* event-based expiration is ok */ &&
-						slices.Contains(profile.Restrictions.Kinds, event.Kind) /* kind match is ok */) {
+				if profile.Restrictions == nil {
+					// everything is allowed
+					return true
+				}
+
+				untilCheck := true
+				if profile.Restrictions.Until > 0 {
+					untilCheck = profile.Restrictions.Until > nostr.Now() /* real-time expiration is ok */ &&
+						profile.Restrictions.Until > event.CreatedAt /* event-based expiration is ok */
+				}
+
+				kindCheck := true
+				if len(profile.Restrictions.Kinds) > 0 {
+					kindCheck = slices.Contains(profile.Restrictions.Kinds, event.Kind)
+				}
+
+				if untilCheck && kindCheck {
 					return true
 				} else {
 					return false
