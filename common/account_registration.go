@@ -134,9 +134,6 @@ func (a *AccountRegistration) Decode(evt nostr.Event) error {
 
 		a.Profiles = append(a.Profiles, profile)
 	}
-	if len(a.Profiles) == 0 {
-		return fmt.Errorf("must have at least one profile")
-	}
 
 	return nil
 }
