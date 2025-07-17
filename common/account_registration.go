@@ -31,15 +31,10 @@ type AccountProfile struct {
 	Name string
 
 	// included in the event as encoded json -- nil if it's an empty string and all is allowed
-	Restrictions *ProfileRestrictions
+	Restrictions *nostr.Filter
 
 	// given by base64encode(sha256(handlersecret + this_profile_name + encoded_restrictions))
 	Secret string
-}
-
-type ProfileRestrictions struct {
-	OnlyKinds []nostr.Kind    `json:"k"`
-	ExpiresAt nostr.Timestamp `json:"u"`
 }
 
 type Signer struct {
@@ -125,7 +120,7 @@ func (a *AccountRegistration) Decode(evt nostr.Event) error {
 			// no restrictions
 		} else {
 			// parse restrictions
-			profile.Restrictions = &ProfileRestrictions{}
+			profile.Restrictions = &nostr.Filter{}
 			err := json.Unmarshal([]byte(tag[3]), profile.Restrictions)
 			if err != nil {
 				return fmt.Errorf("invalid restrictions")

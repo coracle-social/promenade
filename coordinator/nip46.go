@@ -109,9 +109,9 @@ var nip46Signer = &nip46.DynamicSigner{
 		for _, profile := range ar.Profiles {
 			if profile.Secret == secret {
 				if profile.Restrictions == nil /* if there are no restrictions all is allowed */ ||
-					(profile.Restrictions.ExpiresAt > nostr.Now() /* real-time expiration is ok */ &&
-						profile.Restrictions.ExpiresAt > event.CreatedAt /* event-based expiration is ok */ &&
-						slices.Contains(profile.Restrictions.OnlyKinds, event.Kind) /* kind match is ok */) {
+					(profile.Restrictions.Until > nostr.Now() /* real-time expiration is ok */ &&
+						profile.Restrictions.Until > event.CreatedAt /* event-based expiration is ok */ &&
+						slices.Contains(profile.Restrictions.Kinds, event.Kind) /* kind match is ok */) {
 					return true
 				} else {
 					return false
