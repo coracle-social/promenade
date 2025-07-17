@@ -30,7 +30,7 @@ func handleCreate(ctx context.Context, evt nostr.Event) {
 
 	ar := common.AccountRegistration{}
 	if err := ar.Decode(evt); err != nil {
-		log.Warn().Err(err).Stringer("event", evt).Msg("event is not an account registration")
+		log.Warn().Err(err).Stringer("event", evt).Msg("event is not a valid account registration")
 		return
 	}
 

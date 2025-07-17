@@ -117,7 +117,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		return fmt.Errorf("error decoding config: %w", err)
 	}
 
-	log.Info().Msgf("[signer] sign session started for %x", cfg.PublicKey.X.Bytes())
+	log.Info().Msgf("[signer] sign session started for %x", *cfg.PublicKey.X.Bytes())
 
 	var res nostr.Event
 	var ok bool

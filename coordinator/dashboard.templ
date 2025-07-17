@@ -45,27 +45,32 @@ templ dashboard() {
 			if signingSessions.Size() == 0 {
 				<div class="pl-4 text-stone-700">no sessions</div>
 			} else {
-				for id, session := range signingSessions.Range {
-					<div class="pl-8 flex text-stone-700">
-						<div class="mr-2 px-1 hover:bg-stone-100 font-mono flex" title="session id">
-							<div>
+				<table class="pl-8 flex text-stone-700">
+					<tr>
+						<th>session id</th>
+						<th>status</th>
+						<th>signers</th>
+					</tr>
+					for id, session := range signingSessions.Range {
+						<tr>
+							<td class="px-1 hover:bg-stone-100 font-mono">
 								...{ id.Hex()[52:] }
-							</div>
-							<div>
+							</td>
+							<td class="px-1 hover:bg-stone-100">
 								{ session.status }
-							</div>
-						</div>
-						<div class="px-1 hover:bg-stone-100">
-							<table class="table-auto">
-								for signer := range session.chosenSigners {
-									<tr>
-										<td class="font-mono">{ signer.Hex() }</td>
-									</tr>
-								}
-							</table>
-						</div>
-					</div>
-				}
+							</td>
+							<td class="px-1 hover:bg-stone-100">
+								<table class="table-auto">
+									for signer := range session.chosenSigners {
+										<tr>
+											<td class="font-mono">{ signer.Hex() }</td>
+										</tr>
+									}
+								</table>
+							</td>
+						</tr>
+					}
+				</table>
 			}
 		</div>
 	}

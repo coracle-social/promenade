@@ -8,11 +8,13 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore"
 	"fiatjaf.com/nostr/eventstore/badger"
 	"fiatjaf.com/nostr/khatru"
+	"fiatjaf.com/nostr/khatru/policies"
 	"fiatjaf.com/promenade/common"
 	_ "github.com/a-h/templ"
 	"github.com/kelseyhightower/envconfig"
@@ -77,8 +79,14 @@ func main() {
 
 	relay.UseEventstore(db, 400)
 
-	relay.OnEvent = filterOutEverythingExceptWhatWeWant
-	relay.OnRequest = handleRequest
+	relay.RejectConnection = policies.ConnectionRateLimiter(1, time.Minute*5, 100)
+	relay.OnEvent = policies.SeqEvent(
+		policies.EventIPRateLimiter(2, time.Minute*3, 10),
+		filterOutEverythingExceptWhatWeWant)
+	relay.OnRequest = policies.SeqRequest(
+		policies.FilterIPRateLimiter(20, time.Minute, 100),
+		handleRequest,
+	)
 	relay.OnEphemeralEvent = func(ctx context.Context, event nostr.Event) {
 		if event.Kind == nostr.KindNostrConnect {
 			handleNIP46Request(ctx, event)

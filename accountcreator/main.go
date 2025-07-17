@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"os"
 	"slices"
@@ -206,6 +208,18 @@ var create = &cli.Command{
 			}
 		}
 
+		// in the meantime create the root profile
+		secretRand := make([]byte, 12)
+		if _, err := rand.Read(secretRand); err != nil {
+			panic(err)
+		}
+
+		ar.Profiles = append(ar.Profiles, common.AccountProfile{
+			Name:         "__root__",
+			Restrictions: nil, // full authorization
+			Secret:       base32.StdEncoding.EncodeToString(secretRand),
+		})
+
 		// wait until all the signers have answered
 		fmt.Fprintf(os.Stderr, ". waiting for acks from all signers\n")
 		<-ack
@@ -216,13 +230,14 @@ var create = &cli.Command{
 		evt.Sign(sec)
 		for res := range pool.PublishMany(ctx, []string{coordinator}, evt) {
 			if res.Error != nil {
-				return fmt.Errorf("failed to notify the coordinator: %w", err)
+				return fmt.Errorf("failed to notify the coordinator: %w", res.Error)
 			} else {
 				fmt.Fprintf(os.Stderr, ". done\n")
 			}
 		}
 
-		fmt.Printf("bunker://%s?relay=%s\n", ar.HandlerSecret.Public().Hex(), coordinator)
+		fmt.Printf("bunker://%s?relay=%s&secret=%s\n",
+			ar.HandlerSecret.Public().Hex(), coordinator, ar.Profiles[0].Secret)
 
 		return nil
 	},

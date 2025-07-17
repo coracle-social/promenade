@@ -73,7 +73,8 @@ the signature algorithm is implemented roughly as described in the https://eprin
       ["handlersecret", "<random-private-key>"],
       ["h", "<public-key-corresponding-to-handlersecret>"],
       ["threshold", "<m>"],
-      ["p", "<signer-pubkey>", "<hex-encoded-public-shard>"] * n
+      ["p", "<signer-pubkey>", "<hex-encoded-public-shard>"] * n,
+      ["profile", "<name>", "<secret>", "<restrictions>"] * any
     ]
   }
 
