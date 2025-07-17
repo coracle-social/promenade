@@ -57,7 +57,7 @@ var nip46Signer = &nip46.DynamicSigner{
 
 		// associate `secret` and `from` for querying later -- using a fake event
 		record := nostr.Event{
-			Kind:    26430, // this kind doesn't mean anything, it's just an internal gimmick
+			Kind:    common.KindClientSecretAssociation, // just an internal gimmick
 			PubKey:  from,
 			Content: secret,
 			Tags: nostr.Tags{

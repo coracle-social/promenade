@@ -75,7 +75,9 @@ func main() {
 	// relay setup
 	relay.Info.Name = "promenade relay"
 	relay.Info.Description = "a relay that acts as nip-46 provider for multisignature conglomerates"
+	relay.Info.Software = "https://pkg.go.dev/fiatjaf.com/promenade/coordinator"
 	relay.Info.PubKey = s.SecretKey.Public()
+	relay.ChallengePrefix = "frostbunker:"
 
 	relay.UseEventstore(db, 400)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"fiatjaf.com/nostr"
@@ -167,6 +168,21 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 			if !evtToSign.CheckID() {
 				return fmt.Errorf("event to be signed has a broken id")
 			}
+
+			// prevent someone with the bunker url from breaking everything
+			if slices.Contains(common.ForbiddenKinds, evtToSign.Kind) {
+				return fmt.Errorf("event has a forbidden kind")
+			}
+			if evtToSign.Kind == nostr.KindClientAuthentication {
+				if tag := evtToSign.Tags.Find("challenge"); tag != nil && strings.HasPrefix(tag[1], "frostbunker:") {
+					return fmt.Errorf("can't sign a frost bunker coordinator AUTH")
+				}
+				if tag := evtToSign.Tags.Find("relay"); tag != nil && nostr.NormalizeURL(tag[1]) == relay.URL {
+					return fmt.Errorf("can't sign an AUTH for this same coordinator")
+				}
+			}
+			// ~
+
 			msg = evtToSign.ID[:]
 		case common.KindGroupCommit:
 			if err := groupCommitment.DecodeHex(evt.Content); err != nil {
