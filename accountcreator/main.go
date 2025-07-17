@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -209,7 +210,7 @@ var create = &cli.Command{
 		}
 
 		// in the meantime create the root profile
-		secretRand := make([]byte, 12)
+		secretRand := make([]byte, 10)
 		if _, err := rand.Read(secretRand); err != nil {
 			panic(err)
 		}
@@ -217,7 +218,7 @@ var create = &cli.Command{
 		ar.Profiles = append(ar.Profiles, common.AccountProfile{
 			Name:         "__root__",
 			Restrictions: nil, // full authorization
-			Secret:       base32.StdEncoding.EncodeToString(secretRand),
+			Secret:       strings.ToLower(base32.StdEncoding.EncodeToString(secretRand)),
 		})
 
 		// wait until all the signers have answered

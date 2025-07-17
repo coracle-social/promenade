@@ -30,7 +30,7 @@ export async function shardGetBunker(
     onBetterHash: (pow: number) => void,
   ) => Promise<Omit<NostrEvent, "sig">>,
   onProgress: (pct: number) => void,
-): Promise<string> {
+): Promise<NostrEvent> {
   const now = Math.ceil(Date.now() / 1000);
 
   const { shards } = trustedKeyDeal(
@@ -79,7 +79,9 @@ export async function shardGetBunker(
         onProgress(
           (progress.reduce(
             (acc, pow) =>
-              acc + (pow * pow * pow) / (powTarget * powTarget * powTarget),
+              acc +
+              (pow * pow * pow) /
+                (powTarget * powTarget * powTarget),
             0,
           ) /
             maxSigners) *
@@ -110,7 +112,12 @@ export async function shardGetBunker(
         );
 
         // send shard
-        console.log("[info] sending shard to", signer, "at", inboxes[signer]);
+        console.log(
+          "[info] sending shard to",
+          signer,
+          "at",
+          inboxes[signer],
+        );
         pool.publish(inboxes[signer], shardEvt);
 
         setTimeout(reject, 7000);
@@ -152,9 +159,7 @@ export async function shardGetBunker(
 
   try {
     await pool.publish([coordinatorURL], coordEvt)[0];
-    return `bunker://${handlerPublic}?relay=${
-      encodeURIComponent(coordinatorURL)
-    }`;
+    return coordEvt;
   } catch (err) {
     let message = String(err);
     if (!message.startsWith("error") && !message.startsWith("Error")) {
