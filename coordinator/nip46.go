@@ -104,7 +104,7 @@ var nip46Signer = &nip46.DynamicSigner{
 
 		// get previously associated secret
 		next, done := iter.Pull(db.QueryEvents(nostr.Filter{
-			Kinds:   []nostr.Kind{26430},
+			Kinds:   []nostr.Kind{common.KindClientSecretAssociation},
 			Authors: []nostr.PubKey{from},
 			Tags: nostr.TagMap{
 				"p": []string{ar.PubKey.Hex()},
