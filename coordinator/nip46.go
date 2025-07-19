@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"fiatjaf.com/nostr"
+	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/nip46"
 	"fiatjaf.com/promenade/common"
 )
@@ -161,8 +162,11 @@ func handleNIP46Request(ctx context.Context, event nostr.Event) {
 	req, resp, eventResponse, err := nip46Signer.HandleRequest(ctx, event)
 	if err != nil {
 		log.Warn().Err(err).Stringer("request", req).Msg("failed to handle request")
+		useIPFailedAttemptsRateLimit(khatru.GetIP(ctx))
 		return
 	}
+
+	useClientSuccessAttemptsRateLimit(event.PubKey)
 
 	log.Info().Stringer("request", req).Stringer("response", resp).Msg("returning response")
 	relay.BroadcastEvent(eventResponse)

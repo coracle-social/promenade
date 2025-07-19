@@ -11,7 +11,12 @@ import (
 func filterOutEverythingExceptWhatWeWant(ctx context.Context, event nostr.Event) (reject bool, msg string) {
 	// if this is a client we have to ratelimit otherwise they will try a million failed bunker requests
 	if event.Kind == nostr.KindNostrConnect {
-		return CheckIPLimited(khatru.GetIP(ctx)), "rate-limited: you're making too many bunker calls"
+		if block := justCheckClientSuccessAttemptsRateLimit(event.PubKey); block {
+			return true, "rate-limited: you're making too many bunker calls"
+		}
+		if block := justCheckIPFailedAttemptsRateLimit(khatru.GetIP(ctx)); block {
+			return true, "rate-limited: you're making too many failed rpc calls"
+		}
 	}
 
 	if event.Kind.IsEphemeral() {
