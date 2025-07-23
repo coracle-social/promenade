@@ -3,9 +3,9 @@ module fiatjaf.com/promenade
 go 1.24.1
 
 require (
-	fiatjaf.com/nostr v0.0.0-20250512152324-f9e2907a9717
+	fiatjaf.com/nostr v0.0.0-20250721202634-ae076a7be27a
 	github.com/a-h/templ v0.3.906
-	github.com/btcsuite/btcd/btcec/v2 v2.3.4
+	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/kelseyhightower/envconfig v1.4.0
@@ -50,12 +50,10 @@ require (
 	github.com/valyala/fasthttp v1.59.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
-	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
+	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792 // indirect
 	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	google.golang.org/protobuf v1.36.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace fiatjaf.com/nostr => ../nostrlib
