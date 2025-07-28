@@ -83,10 +83,10 @@ var nip46Signer = &nip46.DynamicSigner{
 
 		return ctx, kuc, nil
 	},
-	AuthorizeSigning: func(ctx context.Context, event nostr.Event, from nostr.PubKey) bool {
+	AuthorizeSigning: func(ctx context.Context, event nostr.Event, from nostr.PubKey) error {
 		val := ctx.Value(ACCOUNT)
 		if val == nil {
-			return false
+			return fmt.Errorf("invalid account context")
 		}
 		ar := val.(common.AccountRegistration)
 
@@ -94,11 +94,11 @@ var nip46Signer = &nip46.DynamicSigner{
 		//   or doing other harmful things
 		// (the signers should be doing these same checks but we do them here too just in case)
 		if slices.Contains(common.ForbiddenKinds, event.Kind) {
-			return false
+			return fmt.Errorf("forbidden kind %d", event.Kind)
 		}
 		if event.Kind == nostr.KindClientAuthentication {
 			if tag := event.Tags.Find("challenge"); tag != nil && strings.HasPrefix(tag[1], "frostbunker:") {
-				return false
+				return fmt.Errorf("unsafe AUTH event")
 			}
 		}
 		// ~
@@ -117,7 +117,7 @@ var nip46Signer = &nip46.DynamicSigner{
 		if !ok {
 			log.Warn().Str("client", from.Hex()).Str("user", ar.PubKey.Hex()).
 				Msg("no secret associated")
-			return false
+			return fmt.Errorf("client not registered, must call 'connect'")
 		}
 		secret := evt.Content
 
@@ -125,29 +125,36 @@ var nip46Signer = &nip46.DynamicSigner{
 			if profile.Secret == secret {
 				if profile.Restrictions == nil {
 					// everything is allowed
-					return true
+					return nil
 				}
 
-				untilCheck := true
 				if profile.Restrictions.Until > 0 {
-					untilCheck = profile.Restrictions.Until > nostr.Now() /* real-time expiration is ok */ &&
-						profile.Restrictions.Until > event.CreatedAt /* event-based expiration is ok */
+					if !(profile.Restrictions.Until > nostr.Now() /* real-time expiration is ok */ &&
+						profile.Restrictions.Until > event.CreatedAt /* event-based expiration is ok */) {
+						log.Info().Str("pubkey", ar.PubKey.Hex()).
+							Any("exp", profile.Restrictions.Until).
+							Int64("created_at", int64(event.CreatedAt)).
+							Int64("now", int64(nostr.Now())).
+							Msg("disallowed timestamp")
+						return fmt.Errorf("profile expired")
+					}
 				}
 
-				kindCheck := true
 				if len(profile.Restrictions.Kinds) > 0 {
-					kindCheck = slices.Contains(profile.Restrictions.Kinds, event.Kind)
+					if !slices.Contains(profile.Restrictions.Kinds, event.Kind) {
+						log.Info().Str("pubkey", ar.PubKey.Hex()).
+							Any("allowed", profile.Restrictions.Kinds).
+							Uint16("kind", event.Kind.Num()).
+							Msg("disallowed kind")
+						return fmt.Errorf("disallowed kind")
+					}
 				}
 
-				if untilCheck && kindCheck {
-					return true
-				} else {
-					return false
-				}
+				return nil
 			}
 		}
 
-		return false
+		return fmt.Errorf("no profile matched")
 	},
 	AuthorizeEncryption: func(ctx context.Context, from nostr.PubKey) bool { return false },
 	OnEventSigned: func(event nostr.Event) {
