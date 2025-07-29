@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"maps"
 	"slices"
@@ -41,7 +40,11 @@ func (kuc *GroupContext) GetPublicKey(ctx context.Context) (nostr.PubKey, error)
 }
 
 func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err error) {
-	ipk, _ := hex.DecodeString("02" + kuc.PubKey.Hex())
+	log := log.With().Str("user", kuc.PubKey.Hex()).Logger()
+
+	ipk := make([]byte, 33)
+	ipk[0] = 2
+	copy(ipk[1:], kuc.PubKey[:])
 	pubkey, _ := btcec.ParseJacobian(ipk)
 
 	// signers that are online and that we have chosen to participate in this round
@@ -53,14 +56,31 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 		PublicKey:    &pubkey,
 		Participants: make([]int, 0, kuc.Threshold),
 	}
+
+	// shuffle signers so we don't always use the same
+	shuffle(kuc.Signers)
+
+	// pick a threshold that is online
+	printPicked := make([]string, 0, cfg.Threshold)
+	printOnline := make([]string, 0, len(kuc.Signers))
+	printOffline := make([]string, 0, len(kuc.Signers))
 	for _, signer := range kuc.Signers {
-		if len(chosenSigners) < cfg.Threshold {
-			if _, isOnline := onlineSigners.Load(signer.PeerPubKey); isOnline {
+		if _, isOnline := onlineSigners.Load(signer.PeerPubKey); isOnline {
+			printOnline = append(printOnline, signer.PeerPubKey.Hex())
+			if len(chosenSigners) < cfg.Threshold {
 				chosenSigners[signer.PeerPubKey] = signer
 				cfg.Participants = append(cfg.Participants, signer.Shard.ID)
+				printPicked = append(printPicked, signer.PeerPubKey.Hex())
 			}
+		} else {
+			printOffline = append(printOffline, signer.PeerPubKey.Hex())
 		}
 	}
+	log.Info().
+		Strs("online", printOnline).
+		Strs("offline", printOffline).
+		Strs("picked", printPicked).
+		Msg("signer selection")
 
 	// fail if we don't have enough online signers
 	if len(chosenSigners) < cfg.Threshold {
@@ -105,7 +125,13 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 		}()
 	}()
 
-	log = log.With().Str("session", sessionId.Hex()).Str("user", cfg.PublicKey.X.String()).Logger()
+	// prepare event to be signed so we have our msg hash
+	session.status = "prepare"
+	event.PubKey = kuc.PubKey
+	msg := sha256.Sum256(event.Serialize())
+	event.ID = msg
+
+	log = log.With().Str("session", sessionId.Hex()).Str("event", event.ID.Hex()).Logger()
 
 	log.Info().
 		Any("signers", slices.Collect(maps.Keys(chosenSigners))).
@@ -147,12 +173,6 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 			break
 		}
 	}
-
-	// prepare event to be signed so we have our msg hash
-	session.status = "prepare"
-	event.PubKey = *cfg.PublicKey.X.Bytes()
-	msg := sha256.Sum256(event.Serialize())
-	event.ID = msg
 
 	// prepare aggregated group commitment and finalNonce
 	session.status = "commit"
@@ -234,7 +254,9 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 			partialSigs = append(partialSigs, partialSig)
 
 			log.Info().
-				Int("count", len(partialSigs)).Int("need", len(chosenSigners)).
+				Int("count", len(partialSigs)).
+				Int("need", len(chosenSigners)).
+				Str("signer", evt.PubKey.Hex()).
 				Msg("got good partial signature")
 
 			if len(partialSigs) == len(chosenSigners) {
