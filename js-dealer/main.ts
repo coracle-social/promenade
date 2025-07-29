@@ -120,7 +120,7 @@ export async function shardGetBunker(
                     inboxes[signer],
                 );
 
-                Promise.race(pool.publish(inboxes[signer], shardEvt)).catch(
+                Promise.any(pool.publish(inboxes[signer], shardEvt)).catch(
                     reject,
                 ).then(() => setTimeout(reject, 7000));
             }).finally(sub!.close);
