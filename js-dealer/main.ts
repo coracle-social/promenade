@@ -122,7 +122,7 @@ export async function shardGetBunker(
 
                 Promise.any(pool.publish(inboxes[signer], shardEvt)).catch(
                     reject,
-                ).then(() => setTimeout(reject, 7000));
+                ).then(() => setTimeout(() => reject("timeout: 7s"), 7000));
             }).finally(sub!.close);
         } catch (err) {
             console.warn("failed to contact signer", signer, err);
