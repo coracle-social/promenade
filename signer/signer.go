@@ -57,7 +57,9 @@ func runSigner(ctx context.Context) error {
 		ngroups++
 	}
 
-	mainEventStream := pool.BatchedSubscribeMany(ctx, dfs, nostr.SubscriptionOptions{})
+	mainEventStream := pool.BatchedSubscribeMany(ctx, dfs, nostr.SubscriptionOptions{
+		Label: "prom-sign-req",
+	})
 
 	log.Info().Msgf("[signer] started waiting to sign requests from %d key groups", ngroups)
 	for ie := range mainEventStream {

@@ -20,7 +20,9 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 	for ie := range pool.FetchMany(ctx, common.IndexRelays, nostr.Filter{
 		Kinds:   []nostr.Kind{10002},
 		Authors: []nostr.PubKey{ourPubkey},
-	}, nostr.SubscriptionOptions{}) {
+	}, nostr.SubscriptionOptions{
+		Label: "prom-relays",
+	}) {
 		if latest == nil || latest.CreatedAt < ie.CreatedAt {
 			latest = &ie.Event
 		}
@@ -61,7 +63,9 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 			"p": []string{ourPubkey.Hex()},
 		},
 		Since: nostr.Now(),
-	}, nostr.SubscriptionOptions{}) {
+	}, nostr.SubscriptionOptions{
+		Label: "prom-shards",
+	}) {
 		go handleShard(ctx, shardEvt.Event, pow, restartSigner)
 	}
 }
@@ -114,7 +118,9 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 			"P": []string{shardEvt.PubKey.Hex()},
 			"p": []string{ourPubkey.Hex()},
 		},
-	}, nostr.SubscriptionOptions{})
+	}, nostr.SubscriptionOptions{
+		Label: "prom-coord-ack",
+	})
 	if coordinatorAckEvents == nil {
 		log.Warn().Str("relay", coordinator[1]).Msg("[acceptor] can't subscribe to coordinator")
 		return
