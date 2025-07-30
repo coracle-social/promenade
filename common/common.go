@@ -24,6 +24,7 @@ const (
 
 // signers should never sign these kinds
 var ForbiddenKinds = []nostr.Kind{
+	KindShard,
 	KindAccountRegistration,
 
 	// https://github.com/nostr-protocol/nips/pull/829
