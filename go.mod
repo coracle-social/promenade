@@ -3,7 +3,7 @@ module fiatjaf.com/promenade
 go 1.24.1
 
 require (
-	fiatjaf.com/nostr v0.0.0-20250721202634-ae076a7be27a
+	fiatjaf.com/nostr v0.0.0-20250730100914-788225b902fa
 	github.com/a-h/templ v0.3.924
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
@@ -57,5 +57,3 @@ require (
 	google.golang.org/protobuf v1.36.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace fiatjaf.com/nostr => ../nostrlib
