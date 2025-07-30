@@ -163,7 +163,7 @@ var nip46Signer = &nip46.DynamicSigner{
 }
 
 func handleNIP46Request(ctx context.Context, event nostr.Event) {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+	ctx, cancel := context.WithTimeoutCause(ctx, time.Second*10, fmt.Errorf("handling took too long"))
 	defer cancel()
 
 	req, resp, eventResponse, err := nip46Signer.HandleRequest(ctx, event)

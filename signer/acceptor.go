@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -71,11 +72,16 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 }
 
 func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartSigner func()) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute*5)
+	ctx, cancel := context.WithTimeoutCause(ctx, time.Minute*5, fmt.Errorf("handling shard took too long"))
 	defer cancel()
 
 	ourPubkey, _ := kr.GetPublicKey(ctx)
-	log.Info().Str("user", shardEvt.PubKey.Hex()).Msgf("[acceptor] got shard")
+	log := log.With().
+		Str("user", shardEvt.PubKey.Hex()).
+		Str("evt", shardEvt.ID.Hex()).
+		Logger()
+
+	log.Info().Msgf("[acceptor] got shard")
 
 	// check proof-of-work
 	if work := nip13.CommittedDifficulty(shardEvt); work < int(pow) {
@@ -96,15 +102,17 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 		return
 	}
 	coordinator := shardEvt.Tags.Find("coordinator")
+	log = log.With().Str("coordinator", coordinator[1]).Logger()
+
 	if coordinator == nil || !nostr.IsValidRelayURL(coordinator[1]) {
-		log.Warn().Str("url", coordinator[1]).Msg("[acceptor] got broken coordinator url")
+		log.Warn().Msg("[acceptor] broken coordinator url")
 		return
 	}
 
 	// TOFU the coordinator's pubkey
 	info, err := nip11.Fetch(ctx, coordinator[1])
 	if err != nil {
-		log.Warn().Err(err).Str("relay", coordinator[1]).Msgf("[acceptor] error on nip11 request")
+		log.Warn().Err(err).Str("relay", coordinator[1]).Msg("[acceptor] error on nip11 request")
 		return
 	}
 	// surreptitiously inject it into the event that we will save
@@ -151,7 +159,9 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	}
 	success := false
 	errs := make(map[string]string, len(theirInbox))
-	log.Info().Msgf("[acceptor] sending ack to %v", theirInbox)
+	log.Info().
+		Strs("relays", theirInbox).
+		Msg("[acceptor] sending ack")
 	for res := range pool.PublishMany(ctx, theirInbox, ackEvt) {
 		if res.Error == nil {
 			success = true
@@ -160,7 +170,8 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 		}
 	}
 	if !success {
-		log.Warn().Interface("errors", errs).Str("user", shardEvt.PubKey.Hex()).
+		log.Warn().
+			Interface("errors", errs).
 			Msg("[acceptor] failed to send ack back")
 		return
 	}
@@ -168,12 +179,12 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	// we should be all set now, just needing an ack from the coordinator
 	_, gotAny := <-coordinatorAckEvents
 	if !gotAny {
-		log.Warn().AnErr("ctx-err", ctx.Err()).Str("user", shardEvt.PubKey.Hex()).
+		log.Warn().
+			AnErr("ctx-err", context.Cause(ctx)).
 			Msg("[acceptor] failed to get ack from coordinator")
 		return
 	}
-	log.Info().Str("user", shardEvt.PubKey.Hex()).Str("coordinator", coordinator[1]).
-		Msgf("[acceptor] got ack from coordinator")
+	log.Info().Msg("[acceptor] got ack from coordinator")
 
 	// append to our data store (delete previous entries for the same pubkey)
 	oldShardIds := make([]nostr.ID, 0, 4)
@@ -207,7 +218,7 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 		}
 	}
 
-	log.Info().Str("user", shardEvt.PubKey.Hex()).Msgf("[acceptor] shard registered")
+	log.Info().Msgf("[acceptor] shard registered")
 
 	// restart signer process
 	restartSigner()

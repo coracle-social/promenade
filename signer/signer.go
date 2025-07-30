@@ -104,7 +104,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+		ctx, cancel := context.WithTimeoutCause(ctx, time.Second*10, fmt.Errorf("sending %s to coordinator took too long", evt.Kind))
 		if err := relay.Publish(ctx, *evt); err != nil {
 			log.Warn().Msgf("failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
 			cancel()
