@@ -3,7 +3,7 @@ module fiatjaf.com/promenade
 go 1.24.1
 
 require (
-	fiatjaf.com/nostr v0.0.0-20250730100914-788225b902fa
+	fiatjaf.com/nostr v0.0.0-20250730180630-83c34daa8ba6
 	github.com/a-h/templ v0.3.924
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
