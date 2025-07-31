@@ -72,7 +72,7 @@ func runSigner(ctx context.Context) error {
 			go func() {
 				err := startSession(ctx, ie.Relay, ch)
 				if err != nil {
-					log.Warn().Err(err).Msg("[signer] failed to start session")
+					log.Warn().Err(err).Msg("[signer] signing session failed")
 				}
 			}()
 
@@ -98,19 +98,21 @@ func runSigner(ctx context.Context) error {
 }
 
 func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) error {
-	sendToCoordinator := func(evt *nostr.Event) {
+	sendToCoordinator := func(evt *nostr.Event) error {
 		if err := kr.SignEvent(ctx, evt); err != nil {
-			log.Warn().Msgf("failed to sign %d event to %s: %s", evt.Kind, relay.URL, err)
-			return
+			return fmt.Errorf("failed to sign message k:%d: %w", evt.Kind, err)
 		}
 
-		ctx, cancel := context.WithTimeoutCause(ctx, time.Second*10, fmt.Errorf("sending %s to coordinator took too long", evt.Kind))
+		ctx, cancel := context.WithTimeoutCause(ctx, time.Second*10,
+			fmt.Errorf("sending %s to coordinator took too long", evt.Kind),
+		)
 		if err := relay.Publish(ctx, *evt); err != nil {
-			log.Warn().Msgf("failed to publish %d event to %s: %s", evt.Kind, relay.URL, err)
 			cancel()
-			return
+			return fmt.Errorf("failed to publish k:%d: %w", evt.Kind, err)
 		}
+
 		cancel()
+		return nil
 	}
 
 	// step-1 (receive): initialize ourselves
@@ -120,7 +122,9 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		return fmt.Errorf("error decoding config: %w", err)
 	}
 
-	log.Info().Msgf("[signer] sign session started for %x", *cfg.PublicKey.X.Bytes())
+	userpk := cfg.PublicKey.X.String()[2:]
+	log := log.With().Str("user", userpk).Str("coordinator", relay.URL).Logger()
+	log.Info().Msgf("[signer] sign session started")
 
 	var res nostr.Event
 	var ok bool
@@ -129,7 +133,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		ok = true
 	}
 	if !ok {
-		return fmt.Errorf("[signer] couldn't find a shard for %x", *cfg.PublicKey.X.Bytes())
+		return fmt.Errorf("[signer] couldn't find a shard for %s", userpk)
 	}
 
 	sessionId := evt.ID
@@ -149,12 +153,15 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 	ourCommitment := signer.Commit(sessionId.Hex() /* use the event id as the session id */)
 	commitments := make([]frost.Commitment, 0, cfg.Threshold)
 	commitments = append(commitments, ourCommitment)
-	sendToCoordinator(&nostr.Event{
+	if err := sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindCommit,
 		Content:   ourCommitment.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId.Hex()}, {"p", cfg.PublicKey.X.String()}},
-	})
+	}); err != nil {
+		log.Warn().Err(err).Msg("failed to send commitment to coordinator")
+		return err
+	}
 
 	// step-3 (receive): get commits from other signers and the message to be signed
 	var msg []byte
@@ -170,6 +177,7 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 			if !evtToSign.CheckID() {
 				return fmt.Errorf("event to be signed has a broken id")
 			}
+			log = log.With().Str("id", evtToSign.ID.Hex()).Logger()
 
 			// prevent someone with the bunker url from breaking everything
 			if slices.Contains(common.ForbiddenKinds, evtToSign.Kind) {
@@ -203,13 +211,16 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 		panic(err)
 	}
 
-	sendToCoordinator(&nostr.Event{
+	if err := sendToCoordinator(&nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindPartialSignature,
 		Content:   partialSig.Hex(),
 		Tags:      nostr.Tags{{"e", sessionId.Hex()}, {"p", cfg.PublicKey.X.String()}},
-	})
-	log.Info().Msgf("[signer] signed %x for %x", msg[:], *cfg.PublicKey.X.Bytes())
+	}); err != nil {
+		log.Warn().Err(err).Msg("failed to send partial signature to coordinator")
+		return nil
+	}
 
+	log.Info().Msgf("[signer] signed %x for %x", msg[:], *cfg.PublicKey.X.Bytes())
 	return nil
 }
