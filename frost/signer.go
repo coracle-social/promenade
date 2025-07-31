@@ -98,7 +98,7 @@ func (s *Signer) Commit(sessionId string) Commitment {
 func (s *Signer) Sign(
 	message []byte,
 	groupCommitment BinoncePublic,
-) (*PartialSignature, error) {
+) (PartialSignature, error) {
 	// SignRound(ski, pk, S, statei, ρ, m) -- from https://eprint.iacr.org/2023/899.pdf
 
 	// 6 : b ← Hnon(X, S, ρ, m)
@@ -145,7 +145,7 @@ func (s *Signer) Sign(
 	s.clearNonceCommitment()
 
 	// 11 : return σi
-	return &PartialSignature{
+	return PartialSignature{
 		SignerIdentifier: s.KeyShard.ID,
 		Value:            z,
 	}, nil
