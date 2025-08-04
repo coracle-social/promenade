@@ -177,7 +177,9 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 	// prepare aggregated group commitment and finalNonce
 	session.status = "commit"
 	groupCommitment, bindingCoefficient, finalNonce := cfg.ComputeGroupCommitment(
-		slices.Collect(maps.Values(commitments)), msg[:])
+		slices.Collect(maps.Values(commitments)),
+		msg[:],
+	)
 
 	// step-3 (send): group commits and send the result to signers
 	groupCommitEvt := nostr.Event{

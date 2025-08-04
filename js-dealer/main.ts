@@ -31,6 +31,12 @@ export async function shardGetBunker(
     ) => Promise<Omit<NostrEvent, "sig">>,
     onProgress: (pct: number) => void,
     onSigner?: (pubkey: string, error: string | null) => void,
+    hardcodedReadRelays: string[] = [
+        "wss://relay.primal.net",
+        "wss://pyramid.fiatjaf.com",
+        "wss://relay.damus.io",
+        "wss://nostr-pub.wellorder.net",
+    ],
 ): Promise<NostrEvent> {
     const now = Math.ceil(Date.now() / 1000);
 
@@ -71,6 +77,10 @@ export async function shardGetBunker(
                 tags: [
                     ["p", signer],
                     ["coordinator", coordinatorURL],
+                    [
+                        "reply",
+                        ...hardcodedReadRelays,
+                    ],
                 ],
                 content: ciphertext,
             },
@@ -98,7 +108,7 @@ export async function shardGetBunker(
             let sub: SubCloser;
             await new Promise((resolve, reject) => {
                 sub = pool.subscribeMany(
-                    ourInbox,
+                    [...ourInbox, ...hardcodedReadRelays],
                     [
                         {
                             kinds: [26429],

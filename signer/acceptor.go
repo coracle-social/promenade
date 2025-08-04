@@ -157,12 +157,21 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 			}
 		}
 	}
+
+	// besides their read relays we'll also contact these relays they signaled
+	theirSignaledReplyTag := shardEvt.Tags.Find("reply")
+	theirSignaledReply := make([]string, 0, 5)
+	if theirSignaledReplyTag != nil {
+		theirSignaledReply = append(theirSignaledReply, theirSignaledReplyTag[1:]...)
+	}
+
+	// then we send the ack to them
 	success := false
 	errs := make(map[string]string, len(theirInbox))
 	log.Info().
 		Strs("relays", theirInbox).
 		Msg("[acceptor] sending ack")
-	for res := range pool.PublishMany(ctx, theirInbox, ackEvt) {
+	for res := range pool.PublishMany(ctx, append(theirInbox, theirSignaledReply...), ackEvt) {
 		if res.Error == nil {
 			success = true
 		} else {

@@ -19,8 +19,9 @@ import (
 )
 
 var (
-	dir  string
-	pool = nostr.NewPool(nostr.PoolOptions{})
+	dir                    string
+	pool                   = nostr.NewPool(nostr.PoolOptions{})
+	hardcodedAckReadRelays = []string{"wss://relay.primal.net", "wss://pyramid.fiatjaf.com", "wss://relay.damus.io", "wss://nostr-pub.wellorder.net"}
 )
 
 func main() {
@@ -132,7 +133,7 @@ var create = &cli.Command{
 		shardsSentEventId := make(map[nostr.ID]struct{})
 
 		go func() {
-			for evt := range pool.SubscribeMany(ctx, ourReadRelays, nostr.Filter{
+			for evt := range pool.SubscribeMany(ctx, append(ourReadRelays, hardcodedAckReadRelays...), nostr.Filter{
 				Kinds: []nostr.Kind{common.KindShardACK},
 				Tags: nostr.TagMap{
 					"p": []string{pub.Hex()},
@@ -184,6 +185,7 @@ var create = &cli.Command{
 				Tags: nostr.Tags{
 					{"p", signer.Hex()},
 					{"coordinator", coordinator},
+					append(nostr.Tag{"reply"}, hardcodedAckReadRelays...),
 				},
 				PubKey: pub,
 			}
