@@ -30,11 +30,13 @@ set signersk4 4400000000000000000000000000000000000000000000000000000000000004
 set pid_signer4 $last_pid
 trap 'kill $pid_relay $pid_coord $pid_signer1 $pid_signer2 $pid_signer3 $pid_signer4' SIGINT SIGTERM SIGQUIT EXIT
 
-sleep 2
+sleep 8
 
 set usersk1 (nak key generate)
 nak event --sec $usersk1 -k 10002 -t r='wss://relay.primal.net' -t r='ws://localhost:11111' relay.primal.net purplepag.es
 set bunker1 (go run ./accountcreator create --sec=$usersk1 --threshold 3 --signer=(nak key public $signersk1) --signer=(nak key public $signersk2) --signer=(nak key public $signersk3) --signer=(nak key public $signersk4) --coordinator=localhost:18686)
+
+sleep 4
 
 # set usersk2 (nak key generate)
 # nak event --sec $usersk2 -k 10002 -t r='wss://relay.primal.net' -t r='ws://localhost:11111' relay.primal.net purplepag.es

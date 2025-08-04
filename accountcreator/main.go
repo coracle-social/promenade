@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/keyer"
@@ -100,8 +101,10 @@ var create = &cli.Command{
 
 		fmt.Fprintf(os.Stderr, ". grabbing their inbox relays\n")
 
+		inboxCtx, cancel := context.WithTimeout(ctx, time.Second*4)
+		defer cancel()
 		inboxes := make(map[nostr.PubKey][]string, len(signerPubkeys)+1)
-		for evt := range pool.FetchMany(ctx, common.IndexRelays, nostr.Filter{
+		for evt := range pool.FetchMany(inboxCtx, common.IndexRelays, nostr.Filter{
 			Kinds:   []nostr.Kind{10002},
 			Authors: append(signerPubkeys, pub),
 		}, nostr.SubscriptionOptions{}) {
