@@ -195,15 +195,6 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	}
 	log.Info().Msg("[acceptor] got ack from coordinator")
 
-	// append to our data store (delete previous entries for the same pubkey)
-	oldShardIds := make([]nostr.ID, 0, 4)
-	for old := range store.QueryEvents(nostr.Filter{
-		Kinds:   []nostr.Kind{common.KindStoredShard},
-		Authors: []nostr.PubKey{shardEvt.PubKey},
-	}, 100) {
-		oldShardIds = append(oldShardIds, old.ID)
-	}
-
 	// store now just to prevent losing data in between
 	storedShard := nostr.Event{
 		CreatedAt: nostr.Now(),
@@ -216,15 +207,8 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 		Content: plaintextShard,
 	}
 	storedShard.ID = storedShard.GetID()
-	if err := store.SaveEvent(storedShard); err != nil {
+	if err := store.ReplaceEvent(storedShard); err != nil {
 		panic(err)
-	}
-
-	// and only now delete the old stuff
-	for _, oldId := range oldShardIds {
-		if err := store.DeleteEvent(oldId); err != nil {
-			panic(err)
-		}
 	}
 
 	log.Info().Msgf("[acceptor] shard registered")
