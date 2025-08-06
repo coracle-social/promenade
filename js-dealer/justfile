@@ -1,0 +1,7 @@
+convert-to-npm-module:
+    rm -rf as_npm_module
+    mkdir as_npm_module
+    cp *.ts as_npm_module/
+    cat deno.json | jq '(.imports | to_entries | map(if (.value | startswith("npm:")) then .value = (.value | split("@") | .[-1]) end | if (.value | startswith("jsr:")) then .value = "npm:@jsr/\(.value[5:] | sub("/"; "__"))" end) | from_entries) as $dependencies | {name, type: "module", $dependencies}' > as_npm_module/package.json
+    echo '@jsr:registry=https://npm.jsr.io' > as_npm_module/.npmrc
+    cd as_npm_module && npm install

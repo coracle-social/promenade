@@ -1,6 +1,5 @@
 import { bytesToHex } from "@noble/curves/abstract/utils";
 import type { SimplePool } from "@nostr/tools/pool";
-import type { SubCloser } from "@nostr/tools/abstract-pool";
 import {
     finalizeEvent,
     generateSecretKey,
@@ -12,6 +11,7 @@ import { encrypt, getConversationKey } from "@nostr/tools/nip44";
 
 import { trustedKeyDeal } from "./shardkey.ts";
 import { hexPubShard, hexShard } from "./encodeshard.ts";
+import { getSemaphore } from "@henrygd/semaphore";
 
 export async function shardGetBunker(
     pool: SimplePool,
@@ -47,28 +47,45 @@ export async function shardGetBunker(
     );
 
     const progress: number[] = [];
+    const maxFailures = signers.length - maxSigners;
+    let failed = 0;
 
     // send a shard to each signer
-    let s = 0;
     const coordEvtTags: string[][] = [];
     const randomizer = Math.floor(Math.random() * signers.length);
+    const done: Promise<void>[] = [];
+    const { promise: useless, reject: itsUselessToContinue } = Promise
+        .withResolvers<void>();
+
+    const sem = getSemaphore(Symbol(), shards.length);
+
     for (let p = 0; p < signers.length; p++) {
-        if (s === shards.length) break;
+        await sem.acquire();
+
+        if (shards.length === 0) {
+            // already distributed enough shards
+            break;
+        }
+
+        // get a shard we'll use
+        const shard = shards.pop()!;
 
         const signer = signers[(p + randomizer) % signers.length];
         console.log("[info] trying signer", signer);
 
         if (!inboxes[signer]) {
             console.log("[info] signer has no relays", signer);
+            shards.push(shard); // return the shard
+            sem.release();
             continue;
         }
 
-        const shard = shards[s];
         const encoded = hexShard(shard);
 
         const convkey = getConversationKey(sec, signer);
         const ciphertext = encrypt(encoded, convkey);
 
+        // this isn't async because we can't mine more than once pow at a time anyway
         const unsignedShardEvt = await minePow(
             {
                 pubkey: pub,
@@ -86,7 +103,7 @@ export async function shardGetBunker(
             },
             powTarget,
             (pow: number) => {
-                progress[s] = pow;
+                progress[p] = pow;
                 onProgress(
                     (progress.reduce(
                         (acc, pow) =>
@@ -101,58 +118,90 @@ export async function shardGetBunker(
             },
         );
         const shardEvt = finalizeEvent(unsignedShardEvt, sec);
-        console.log("[info] mining complete", shardEvt);
+        console.log("[info] mining complete", signer, shardEvt);
 
-        // wait for answer
-        try {
-            let sub: SubCloser;
-            await new Promise((resolve, reject) => {
-                sub = pool.subscribeMany(
-                    [...ourInbox, ...hardcodedReadRelays],
-                    [
-                        {
-                            kinds: [26429],
-                            authors: [signer],
-                            "#p": [pub],
-                            "#e": [shardEvt.id],
-                        },
-                    ],
-                    {
-                        onevent: resolve,
+        const answer = new Promise<void>((resolve, reject) => {
+            const subc = pool.subscribe(
+                [...ourInbox, ...hardcodedReadRelays],
+                {
+                    kinds: [26429],
+                    authors: [signer],
+                    "#p": [pub],
+                    "#e": [shardEvt.id],
+                },
+                {
+                    onevent: () => {
+                        resolve();
+                        subc?.close();
                     },
-                );
+                },
+            );
 
-                // send shard
-                console.log(
-                    "[info] sending shard to",
-                    signer,
-                    "at",
-                    inboxes[signer],
-                );
+            setTimeout(() => {
+                reject("timeout: 7s");
+                subc?.close();
+            }, 7000);
+        });
 
-                Promise.any(pool.publish(inboxes[signer], shardEvt)).catch(
-                    reject,
-                ).then(() => setTimeout(() => reject("timeout: 7s"), 7000));
-            }).finally(sub!.close);
-        } catch (err) {
-            console.warn("failed to contact signer", signer, err);
-            onSigner?.(signer, `failed to contact: ${err}`);
-            continue;
-        }
+        // send shard
+        console.log(
+            "[info] sending shard to",
+            signer,
+            "at",
+            inboxes[signer],
+        );
 
-        // ok
-        onSigner?.(signer, null);
+        const signerRelays = inboxes[signer];
+        const pubSuccess = Promise.any(pool.publish(signerRelays, shardEvt))
+            .catch((errs: AggregateError) => {
+                errs.errors.forEach((err, i) => {
+                    console.warn(signerRelays[i], err);
+                });
+                throw `Failed to publish to all of [ ${
+                    signerRelays.join(" ")
+                } ]`;
+            });
 
-        // this one worked, add it to the coordinator event
-        coordEvtTags.push(["p", signer, hexPubShard(shard.pubShard)]);
+        const ack = Promise.all([pubSuccess, answer])
+            .then(() => {
+                console.log("[info] signer is good", signer);
 
-        s++;
-        console.log("[info] signer is good", signer);
+                // all was ok
+                onSigner?.(signer, null);
+
+                // this one worked, add it to the coordinator event
+                coordEvtTags.push(["p", signer, hexPubShard(shard.pubShard)]);
+            }).catch((err) => {
+                failed++;
+
+                onSigner?.(signer, `failed to contact: ${err}`);
+                if (failed > maxFailures) {
+                    itsUselessToContinue();
+                    shards.push(shard); // return the shard
+                }
+
+                throw err;
+            });
+
+        done.push(ack);
+    }
+
+    if (shards.length > 0) {
+        throw "Failed to get enough signers!";
+    }
+
+    try {
+        await Promise.race([
+            Promise.all(done),
+            useless,
+        ]);
+    } catch (_) {
+        throw "Failed to get enough signers.";
     }
 
     // if we don't have enough signers stop here
     if (coordEvtTags.length < maxSigners) {
-        throw "Failed to get enough signers.";
+        throw "Failed to get enough signers?";
     }
 
     // now that we have sent all the shards inform the coordinator
