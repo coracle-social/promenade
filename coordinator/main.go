@@ -11,7 +11,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore"
-	"fiatjaf.com/nostr/eventstore/badger"
+	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/khatru"
 	"fiatjaf.com/nostr/khatru/policies"
 	"fiatjaf.com/promenade/common"
@@ -60,7 +60,7 @@ func main() {
 	nip46Signer.Init()
 
 	// database
-	db = &badger.BadgerBackend{Path: s.EventstorePath}
+	db = &boltdb.BoltBackend{Path: s.EventstorePath}
 	if err := db.Init(); err != nil {
 		log.Fatal().Err(err).Str("path", s.EventstorePath).Msg("failed to initialize events db")
 		return

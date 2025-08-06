@@ -84,7 +84,7 @@ func (kuc *GroupContext) SignEvent(ctx context.Context, event *nostr.Event) (err
 
 	// fail if we don't have enough online signers
 	if len(chosenSigners) < cfg.Threshold {
-		return fmt.Errorf("not enough signers online: have %d, needed %d", len(chosenSigners), cfg.Threshold)
+		return fmt.Errorf("not enough signers online: have %d, needed %d, missing: %v", len(chosenSigners), cfg.Threshold, printOffline)
 	}
 
 	// step-1 (send): initialize each participant.

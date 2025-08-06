@@ -7,7 +7,7 @@ import (
 
 	"fiatjaf.com/nostr"
 	"fiatjaf.com/nostr/eventstore"
-	"fiatjaf.com/nostr/eventstore/badger"
+	"fiatjaf.com/nostr/eventstore/boltdb"
 	"fiatjaf.com/nostr/keyer"
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v3"
@@ -40,7 +40,7 @@ var app = &cli.Command{
 		&cli.StringFlag{
 			Name:  "shards-db",
 			Usage: "path to the eventstore directory",
-			Value: "./shards",
+			Value: "./shardstore",
 		},
 		&cli.UintFlag{
 			Name:  "min-pow",
@@ -53,7 +53,7 @@ var app = &cli.Command{
 		},
 	},
 	Action: func(ctx context.Context, c *cli.Command) error {
-		store = &badger.BadgerBackend{Path: c.String("shards-db")}
+		store = &boltdb.BoltBackend{Path: c.String("shards-db")}
 		err := store.Init()
 		if err != nil {
 			return fmt.Errorf("failed to open db at %s: %w", c.String("shards-db"), err)
