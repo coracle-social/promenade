@@ -52,35 +52,36 @@ export async function shardGetBunker(
 
   // send a shard to each signer
   const coordEvtTags: string[][] = [];
-  const randomizer = Math.floor(Math.random() * signers.length);
-  const done: Promise<void>[] = [];
 
   let itsUselessToContinue = false;
   const sem = getSemaphore(Symbol(), shards.length);
+  const work = getSemaphore(Symbol(), 1);
 
-  for (let p = 0; p < signers.length; p++) {
-    if (itsUselessToContinue) {
-      throw new Error("Too many failures: failed to get enough signers.");
-    }
-
+  await Promise.all(signers.map(async (signer, p) => {
+    console.log("[info] initializing signer", signer);
     await sem.acquire();
+
+    if (itsUselessToContinue) {
+      sem.release();
+      return;
+    }
 
     if (shards.length === 0) {
       // already distributed enough shards
-      break;
+      sem.release();
+      return;
     }
 
     // get a shard we'll use
     const shard = shards.pop()!;
 
-    const signer = signers[(p + randomizer) % signers.length];
     console.log("[info] trying signer", signer);
 
     if (!inboxes[signer]) {
       console.log("[info] signer has no relays", signer);
       shards.push(shard); // return the shard
       sem.release();
-      continue;
+      return;
     }
 
     const encoded = hexShard(shard);
@@ -89,6 +90,7 @@ export async function shardGetBunker(
     const ciphertext = encrypt(encoded, convkey);
 
     // this isn't async because we can't mine more than once pow at a time anyway
+    await work.acquire();
     const unsignedShardEvt = await minePow(
       {
         pubkey: pub,
@@ -120,83 +122,82 @@ export async function shardGetBunker(
         );
       },
     );
+    work.release();
     const shardEvt = finalizeEvent(unsignedShardEvt, sec);
     console.log("[info] mining complete", signer, shardEvt);
 
-    const answer = new Promise<void>((resolve, reject) => {
-      const subc = pool.subscribe(
-        [...ourInbox, ...hardcodedReadRelays],
-        {
-          kinds: [26429],
-          authors: [signer],
-          "#p": [pub],
-          "#e": [shardEvt.id],
-        },
-        {
-          onevent: () => {
-            resolve();
-            subc?.close();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const subc = pool.subscribe(
+          [...ourInbox, ...hardcodedReadRelays],
+          {
+            kinds: [26429],
+            authors: [signer],
+            "#p": [pub],
+            "#e": [shardEvt.id],
           },
-        },
-      );
+          {
+            onevent: () => {
+              resolve();
+              subc?.close();
+            },
+          },
+        );
 
-      setTimeout(() => {
-        reject("timeout: 7s");
-        subc?.close();
-      }, 7000);
-    });
+        setTimeout(() => {
+          reject("timeout: 7s");
+          subc?.close();
+        }, 7000);
 
-    // send shard
-    console.log(
-      "[info] sending shard to",
-      signer,
-      "at",
-      inboxes[signer],
-    );
-
-    const signerRelays = inboxes[signer];
-    const pubSuccess = Promise.any(pool.publish(signerRelays, shardEvt))
-      .catch((errs: AggregateError) => {
-        errs.errors.forEach((err, i) => {
-          console.warn(signerRelays[i], err);
-        });
-        throw `Failed to publish to all of [ ${signerRelays.join(" ")} ]`;
+        // send shard
+        console.log("[info] sending shard to", signer, "at", inboxes[signer]);
+        const signerRelays = inboxes[signer];
+        Promise.any(pool.publish(signerRelays, shardEvt))
+          .catch((errs: AggregateError) => {
+            errs.errors.forEach((err, i) => {
+              console.warn(signerRelays[i], err);
+            });
+            reject(`Failed to publish to all of [ ${signerRelays.join(" ")} ]`);
+          });
       });
+    } catch (err) {
+      failed++;
 
-    const ack = Promise.all([pubSuccess, answer])
-      .then(() => {
-        console.log("[info] signer is good", signer);
+      onSigner?.(signer, `failed to contact: ${err}`);
+      if (failed > maxFailures) {
+        itsUselessToContinue = true;
+      }
 
-        // all was ok
-        onSigner?.(signer, null);
+      progress[p] = 0;
 
-        // this one worked, add it to the coordinator event
-        coordEvtTags.push(["p", signer, hexPubShard(shard.pubShard)]);
+      shards.push(shard); // return the shard
+      sem.release();
+      return;
+    }
 
-        // when succeeding we purposefully don't release the semaphore so the loop doesn't end early
-      }).catch((err) => {
-        failed++;
+    console.log("[info] signer is good", signer);
 
-        onSigner?.(signer, `failed to contact: ${err}`);
-        if (failed > maxFailures) {
-          itsUselessToContinue = true;
-          shards.push(shard); // return the shard
-        }
+    // all was ok
+    onSigner?.(signer, null);
 
-        sem.release();
-      });
+    // this one worked, add it to the coordinator event
+    coordEvtTags.push(["p", signer, hexPubShard(shard.pubShard)]);
 
-    done.push(ack);
+    // when succeeding we purposefully don't release the semaphore so the loop doesn't end early
+    //
+    // -- but when we have gotten enough signers we must release this so any other attempts locked
+    //    in the sem.acquire() line above can succeed and we can exit the loop
+    if (coordEvtTags.length === maxSigners) {
+      sem.release();
+    }
+  }));
+
+  if (itsUselessToContinue) {
+    throw new Error("Too many failures: failed to get enough signers.");
   }
 
   if (shards.length > 0) {
     throw "Failed to get enough signers!";
-  }
-
-  try {
-    await Promise.all(done);
-  } catch (_) {
-    throw "Failed to get enough signers.";
   }
 
   // if we don't have enough signers stop here
