@@ -18,7 +18,8 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 
 	// update our 10002 list if necessary
 	var latest *nostr.Event
-	for ie := range pool.FetchMany(ctx, common.IndexRelays, nostr.Filter{
+	fetchCtx, cancel := context.WithTimeout(ctx, time.Second*3)
+	for ie := range pool.FetchMany(fetchCtx, common.IndexRelays, nostr.Filter{
 		Kinds:   []nostr.Kind{10002},
 		Authors: []nostr.PubKey{ourPubkey},
 	}, nostr.SubscriptionOptions{
@@ -28,6 +29,7 @@ func runAcceptor(ctx context.Context, relayURLs []string, pow uint64, restartSig
 			latest = &ie.Event
 		}
 	}
+	cancel()
 
 	var ourInbox []string
 	if latest != nil {
