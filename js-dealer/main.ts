@@ -54,12 +54,15 @@ export async function shardGetBunker(
     const coordEvtTags: string[][] = [];
     const randomizer = Math.floor(Math.random() * signers.length);
     const done: Promise<void>[] = [];
-    const { promise: useless, reject: itsUselessToContinue } = Promise
-        .withResolvers<void>();
 
+    let itsUselessToContinue = false;
     const sem = getSemaphore(Symbol(), shards.length);
 
     for (let p = 0; p < signers.length; p++) {
+        if (itsUselessToContinue) {
+            throw new Error("Too many failures: failed to get enough signers.");
+        }
+
         await sem.acquire();
 
         if (shards.length === 0) {
@@ -171,16 +174,18 @@ export async function shardGetBunker(
 
                 // this one worked, add it to the coordinator event
                 coordEvtTags.push(["p", signer, hexPubShard(shard.pubShard)]);
+
+                // when succeeding we purposefully don't release the semaphore so the loop doesn't end early
             }).catch((err) => {
                 failed++;
 
                 onSigner?.(signer, `failed to contact: ${err}`);
                 if (failed > maxFailures) {
-                    itsUselessToContinue();
+                    itsUselessToContinue = true;
                     shards.push(shard); // return the shard
                 }
 
-                throw err;
+                sem.release();
             });
 
         done.push(ack);
@@ -191,10 +196,7 @@ export async function shardGetBunker(
     }
 
     try {
-        await Promise.race([
-            Promise.all(done),
-            useless,
-        ]);
+        await Promise.all(done);
     } catch (_) {
         throw "Failed to get enough signers.";
     }
