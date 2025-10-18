@@ -197,7 +197,7 @@ func handleShard(ctx context.Context, shardEvt nostr.Event, pow uint64, restartS
 	}
 	log.Info().Msg("[acceptor] got ack from coordinator")
 
-	// store now just to prevent losing data in between
+	// then we store this shard and will start listening to sign requests from it
 	storedShard := nostr.Event{
 		CreatedAt: nostr.Now(),
 		Kind:      common.KindStoredShard,
