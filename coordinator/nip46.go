@@ -101,7 +101,15 @@ var nip46Signer = &nip46.DynamicSigner{
 				return fmt.Errorf("unsafe AUTH event")
 			}
 		}
-		// ~
+
+		// disallow events signed for the future and the past
+		now := nostr.Now()
+		if event.CreatedAt < now-80 {
+			return fmt.Errorf("can't sign event in the past")
+		}
+		if event.CreatedAt > now+80 {
+			return fmt.Errorf("can't sign event in the future")
+		}
 
 		// get previously associated secret
 		next, done := iter.Pull(db.QueryEvents(nostr.Filter{

@@ -191,7 +191,15 @@ func startSession(ctx context.Context, relay *nostr.Relay, ch chan nostr.Event) 
 					return fmt.Errorf("can't sign an AUTH for this same coordinator")
 				}
 			}
-			// ~
+
+			// disallow events signed for the future and the past
+			now := nostr.Now()
+			if evtToSign.CreatedAt < now-80 {
+				return fmt.Errorf("can't sign event in the past")
+			}
+			if evtToSign.CreatedAt > now+80 {
+				return fmt.Errorf("can't sign event in the future")
+			}
 
 			msg = evtToSign.ID[:]
 		case common.KindGroupCommit:
