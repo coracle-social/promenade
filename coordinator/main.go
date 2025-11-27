@@ -77,7 +77,6 @@ func main() {
 
 	relay.UseEventstore(db, 400)
 
-	relay.RejectConnection = policies.ConnectionRateLimiter(1, time.Minute*5, 100)
 	relay.OnEvent = filterOutEverythingExceptWhatWeWant
 	relay.OnRequest = policies.SeqRequest(
 		policies.FilterIPRateLimiter(20, time.Minute, 100),
