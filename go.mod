@@ -3,7 +3,7 @@ module fiatjaf.com/promenade
 go 1.25
 
 require (
-	fiatjaf.com/nostr v0.0.0-20251126120447-7261a4b515ed
+	fiatjaf.com/nostr v0.0.0-20251201130301-fb1603e062a4
 	github.com/a-h/templ v0.3.924
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
@@ -54,4 +54,5 @@ require (
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
